@@ -7,3 +7,11 @@ __pycache__/
 
 # system
 .DS_Store
+
+# generated outputs / runtime state
+outputs/
+state/runtime/
+
+# state: keep schema, ignore run artifacts
+state/approvals/
+state/snapshots/
