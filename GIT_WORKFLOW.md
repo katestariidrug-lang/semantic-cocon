@@ -54,15 +54,32 @@
 
 Команды:
 
-    git add -A
+    git status
+    git add <нужные_файлы>
     git status
     git commit -m "Краткое описание изменения"
+
+    git add -A использовать ТОЛЬКО если:
+    - все изменения одного смыслового типа
+    - ты понимаешь каждый файл в списке
+    - в staging не попадают outputs/ и state/*
 
 ---
 
 ### Когда делать push
 
 Push — это фиксация результата в GitHub.
+
+    git status
+    git fetch origin
+    git status
+
+Если видишь:
+- behind → нужно git pull --rebase
+- diverged → обязательно git pull --rebase
+- up to date → можно push
+
+Перед каждым push ОБЯЗАТЕЛЬНО:
 
 Пушить, если:
 - закончена задача или подзадача
@@ -74,6 +91,15 @@ Push — это фиксация результата в GitHub.
     git push
 
 Коммиты можно делать часто. Пушить — по необходимости.
+
+Если git push отклонён (fetch first):
+
+    git status
+    git fetch origin
+    git pull --rebase
+    git push
+
+НИКОГДА не использовать git push --force.
 
 ---
 
@@ -109,6 +135,11 @@ Push — это фиксация результата в GitHub.
     git ls-files | Select-String state
 
 Если команды ничего не выводят — эти папки не tracked (это правильно).
+
+Проверить, почему конкретный файл игнорируется:
+
+    git check-ignore -v <путь_к_файлу>
+
 
 ---
 
@@ -155,9 +186,16 @@ Push — это фиксация результата в GitHub.
 
 ### Вернуть всё как в GitHub
 
+Перед reset ОБЯЗАТЕЛЬНО:
+
+    git status
+    git stash -u   (если есть незакоммиченные правки)
+
+Затем:
+
     git reset --hard origin/main
 
-ВНИМАНИЕ: удаляет все незакоммиченные локальные изменения.
+ВНИМАНИЕ: без stash изменения будут потеряны.
 
 ---
 
@@ -205,15 +243,17 @@ Push — это фиксация результата в GitHub.
 
     git status
 
-Добавить новые файлы:ъ
+Добавить файлы в коммит (ТОЛЬКО осознанно):
 
+    git status
     git add README.md
-    it add GIT_WORKFLOW.md
+    git add GIT_WORKFLOW.md
+    git status
+
 
 Коммит (сохранить состояние проекта):
 
-    git add -A
-    git commit -m "..."
+    git commit -m "Обновлена шпаргалка Git: контроль перед push и безопасный add"
 
 Push (отправить сохранённое в GitHub):
 
