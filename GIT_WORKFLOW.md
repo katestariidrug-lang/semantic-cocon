@@ -205,6 +205,11 @@ Push — это фиксация результата в GitHub.
 
     git status
 
+Добавить новые файлы:ъ
+
+    git add README.md
+    it add GIT_WORKFLOW.md
+
 Коммит (сохранить состояние проекта):
 
     git add -A
