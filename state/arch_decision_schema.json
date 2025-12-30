@@ -1,0 +1,50 @@
+{
+  "_comment": {
+    "файл": "arch_decision_schema.json",
+    "назначение": "Каноническая структура ARCH_DECISION_JSON",
+    "используется": "выход PASS_1, canonicalize → hash → freeze",
+    "изменяемость": "immutable после PASS_1"
+  },
+  "pass": "DECIDE",
+  "version": "1.0",
+  "task": {
+    "task_id": "",
+    "domain": "",
+    "region": "",
+    "strategic_goal": "",
+    "main_topic": ""
+  },
+  "immutable_architecture": {
+    "hub_chain": [],
+    "node_registry": [],
+    "owner_map": [],
+    "linking_matrix_skeleton": [],
+
+    "node_schema_min": {
+      "node_id": "string",
+      "node_type": "HUB|SPOKE|SUPPORT",
+      "title": "string",
+      "intent": "string",
+      "owner_status": "OWNED|ADJACENT|OUT_OF_SCOPE",
+      "canonical_home": "string",
+      "children": []
+    }
+  },
+  "mutable_scopes_allowed_in_pass_2": {
+    "semantic_enrichment": true,
+    "keywords": true,
+    "anchors": true,
+    "patient_questions": true,
+    "final_texts_tables": true
+  },
+  "constraints": {
+    "no_agent_mode": true,
+    "no_self_audit": true,
+    "immutability_outside_llm_only": true
+  },
+  "meta": {
+    "created_utc": "",
+    "decide_model": "",
+    "notes": ""
+  }
+}

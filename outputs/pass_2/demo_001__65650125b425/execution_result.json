@@ -1,0 +1,154 @@
+{
+  "task": {
+    "task_id": "demo_001",
+    "domain": "fomin-clinic.ru",
+    "region": "Россия",
+    "strategic_goal": "topical_authority",
+    "main_topic": "норма сахара в крови"
+  },
+  "used_snapshot_hash": "",
+  "deliverables": {
+    "semantic_enrichment": {
+      "node_hub_main": "Comprehensive overview of blood glucose levels, physiological importance, and general reference ranges for healthy individuals.",
+      "node_spoke_age": "Detailed breakdown of glucose thresholds across different life stages from infancy to elderly populations.",
+      "node_spoke_pregnancy": "Specific focus on gestational glucose monitoring, GDM risks, and strict pregnancy-specific target ranges.",
+      "node_spoke_measurement": "Practical guide on preparation for tests, glucometer usage, and factors affecting measurement accuracy.",
+      "node_support_endocrinology": "Conversion-oriented content highlighting professional diagnostic services and expert medical consultation."
+    },
+    "keywords": {
+      "node_hub_main": [
+        "норма сахара в крови",
+        "уровень глюкозы в крови",
+        "показатели сахара",
+        "анализ крови на сахар",
+        "норма глюкозы у здорового человека"
+      ],
+      "node_spoke_age": [
+        "норма сахара в крови по возрасту",
+        "таблица сахара в крови по возрасту",
+        "норма сахара у детей",
+        "сахар в крови у пожилых",
+        "возрастные изменения уровня глюкозы"
+      ],
+      "node_spoke_pregnancy": [
+        "норма сахара при беременности",
+        "глюкоза в крови у беременных",
+        "гестационный сахарный диабет",
+        "глюкозотолерантный тест при беременности",
+        "высокий сахар у беременных что делать"
+      ],
+      "node_spoke_measurement": [
+        "как измерить сахар в крови",
+        "правила сдачи крови на сахар",
+        "глюкометр как пользоваться",
+        "анализ на сахар натощак",
+        "как правильно мерить сахар глюкометром"
+      ],
+      "node_support_endocrinology": [
+        "записаться к эндокринологу",
+        "консультация эндокринолога",
+        "прием эндокринолога цена",
+        "клиника эндокринологии",
+        "врач эндокринолог москва"
+      ]
+    },
+    "anchors": [
+      {
+        "from_node_id": "node_hub_main",
+        "to_node_id": "node_spoke_age",
+        "anchor_variants": [
+          "нормы сахара по возрасту",
+          "таблица показателей для разных возрастов",
+          "как меняется норма глюкозы с годами"
+        ]
+      },
+      {
+        "from_node_id": "node_hub_main",
+        "to_node_id": "node_spoke_pregnancy",
+        "anchor_variants": [
+          "особенности уровня сахара при беременности",
+          "нормы для беременных женщин",
+          "контроль глюкозы в период вынашивания"
+        ]
+      },
+      {
+        "from_node_id": "node_hub_main",
+        "to_node_id": "node_spoke_measurement",
+        "anchor_variants": [
+          "как правильно измерять сахар",
+          "инструкция по замеру глюкозы",
+          "правила подготовки к анализу"
+        ]
+      },
+      {
+        "from_node_id": "node_spoke_age",
+        "to_node_id": "node_hub_main",
+        "anchor_variants": [
+          "общие нормы сахара в крови",
+          "базовые показатели глюкозы",
+          "вернуться к основному руководству"
+        ]
+      },
+      {
+        "from_node_id": "node_spoke_pregnancy",
+        "to_node_id": "node_hub_main",
+        "anchor_variants": [
+          "стандартные значения сахара",
+          "общая информация о глюкозе",
+          "основная статья о нормах сахара"
+        ]
+      },
+      {
+        "from_node_id": "node_spoke_measurement",
+        "to_node_id": "node_hub_main",
+        "anchor_variants": [
+          "нормальные значения сахара",
+          "что означают результаты анализа",
+          "справочник норм глюкозы"
+        ]
+      },
+      {
+        "from_node_id": "node_hub_main",
+        "to_node_id": "node_support_endocrinology",
+        "anchor_variants": [
+          "записаться к эндокринологу",
+          "консультация врача-эндокринолога",
+          "пройти обследование в клинике"
+        ]
+      }
+    ],
+    "patient_questions": {
+      "node_hub_main": [
+        "Какая норма сахара в крови считается идеальной?",
+        "Что влияет на уровень сахара в течение дня?",
+        "Чем опасен высокий уровень глюкозы?"
+      ],
+      "node_spoke_age": [
+        "Как меняется норма сахара после 50 лет?",
+        "Каким должен быть сахар у ребенка в 5 лет?",
+        "Есть ли отличия в нормах для мужчин и женщин?"
+      ],
+      "node_spoke_pregnancy": [
+        "Почему при беременности нормы сахара строже?",
+        "Что такое ГСД и как он влияет на ребенка?",
+        "Когда нужно сдавать тест на толерантность к глюкозе?"
+      ],
+      "node_spoke_measurement": [
+        "Можно ли пить воду перед сдачей крови на сахар?",
+        "Как часто нужно проверять сахар глюкометром?",
+        "Почему результаты из пальца и из вены различаются?"
+      ],
+      "node_support_endocrinology": [
+        "Какие анализы нужно принести на первый прием к эндокринологу?",
+        "Как проходит консультация по вопросам диабета?",
+        "Можно ли записаться к врачу онлайн?"
+      ]
+    },
+    "final_artifacts": {
+      "summary_table_placeholder": "Table: Blood sugar norms by age (Children, Adults, Elderly, Pregnant).",
+      "cta_block": "Professional endocrinology consultation at Fomin Clinic. Expert diagnostics and personalized treatment plans.",
+      "measurement_checklist": "1. Fasting 8-12h. 2. No smoking before test. 3. Clean hands for glucometer. 4. Record results in a diary."
+    }
+  },
+  "immutable_fingerprint": "575345d0fc85ac38b53c8025e80f13484b45fb822b7f9992dff4da98737e5565"
+}

@@ -1,0 +1,146 @@
+[
+  {
+    "from_node_id": "node_hub_main",
+    "to_node_id": "node_spoke_age_norms",
+    "variants": [
+      "нормы сахара по возрасту",
+      "таблица по годам"
+    ]
+  },
+  {
+    "from_node_id": "node_hub_main",
+    "to_node_id": "node_spoke_pregnancy",
+    "variants": [
+      "сахар у беременных",
+      "нормативы для будущих мам"
+    ]
+  },
+  {
+    "from_node_id": "node_hub_main",
+    "to_node_id": "node_spoke_fasting_postprandial",
+    "variants": [
+      "сахар натощак и после еды",
+      "замеры после приема пищи"
+    ]
+  },
+  {
+    "from_node_id": "node_hub_main",
+    "to_node_id": "node_spoke_venous_capillary",
+    "variants": [
+      "кровь из вены и пальца",
+      "разница в показателях"
+    ]
+  },
+  {
+    "from_node_id": "node_hub_main",
+    "to_node_id": "node_spoke_units_conversion",
+    "variants": [
+      "перевод единиц измерения",
+      "ммоль/л в мг/дл"
+    ]
+  },
+  {
+    "from_node_id": "node_hub_main",
+    "to_node_id": "node_spoke_hba1c",
+    "variants": [
+      "гликированный гемоглобин",
+      "HbA1c"
+    ]
+  },
+  {
+    "from_node_id": "node_hub_main",
+    "to_node_id": "node_spoke_prediabetes_thresholds",
+    "variants": [
+      "признаки предиабета",
+      "пограничные значения"
+    ]
+  },
+  {
+    "from_node_id": "node_hub_main",
+    "to_node_id": "node_spoke_diabetes_thresholds",
+    "variants": [
+      "диагностика диабета",
+      "критерии постановки диагноза"
+    ]
+  },
+  {
+    "from_node_id": "node_hub_main",
+    "to_node_id": "node_spoke_preparation",
+    "variants": [
+      "как подготовиться к анализу",
+      "правила сдачи крови"
+    ]
+  },
+  {
+    "from_node_id": "node_hub_main",
+    "to_node_id": "node_spoke_glucometer_usage",
+    "variants": [
+      "использование глюкометра",
+      "домашний контроль"
+    ]
+  },
+  {
+    "from_node_id": "node_hub_main",
+    "to_node_id": "node_spoke_deviation_causes",
+    "variants": [
+      "причины отклонений",
+      "почему сахар не в норме"
+    ]
+  },
+  {
+    "from_node_id": "node_spoke_pregnancy",
+    "to_node_id": "node_support_gestational_diabetes",
+    "variants": [
+      "гестационный сахарный диабет",
+      "ГСД"
+    ]
+  },
+  {
+    "from_node_id": "node_spoke_preparation",
+    "to_node_id": "node_support_analysis_errors",
+    "variants": [
+      "ошибки при подготовке",
+      "что влияет на результат"
+    ]
+  },
+  {
+    "from_node_id": "node_spoke_diabetes_thresholds",
+    "to_node_id": "node_support_endocrinologist_routing",
+    "variants": [
+      "записаться к эндокринологу",
+      "консультация врача"
+    ]
+  },
+  {
+    "from_node_id": "node_spoke_diabetes_thresholds",
+    "to_node_id": "node_support_additional_tests",
+    "variants": [
+      "дополнительные анализы",
+      "уточняющая диагностика"
+    ]
+  },
+  {
+    "from_node_id": "node_spoke_deviation_causes",
+    "to_node_id": "node_support_hypoglycemia_signs",
+    "variants": [
+      "симптомы гипогликемии",
+      "признаки падения сахара"
+    ]
+  },
+  {
+    "from_node_id": "node_spoke_deviation_causes",
+    "to_node_id": "node_support_hyperglycemia_signs",
+    "variants": [
+      "симптомы гипергликемии",
+      "признаки высокого сахара"
+    ]
+  },
+  {
+    "from_node_id": "node_spoke_fasting_postprandial",
+    "to_node_id": "node_support_diet_impact",
+    "variants": [
+      "влияние питания",
+      "диета и сахар"
+    ]
+  }
+]

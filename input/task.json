@@ -1,0 +1,16 @@
+{
+  "task_id": "demo_001",
+  "domain": "fomin-clinic.ru",
+  "region": "Россия",
+  "strategic_goal": "topical_authority",
+  "main_topic": "норма сахара в крови",
+  "constraints": {
+    "no_agent_mode": true,
+    "no_self_audit": true,
+    "immutability_outside_llm_only": true
+  },
+  "inputs": {
+    "user_keywords": [],
+    "notes": ""
+  }
+}
