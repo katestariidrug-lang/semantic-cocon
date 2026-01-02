@@ -15,3 +15,10 @@ state/runtime/
 # state: keep schema, ignore run artifacts
 state/approvals/
 state/snapshots/
+
+# local / working files
+work_step.ini
+to_do.md
+
+# internal context (not part of public repo)
+SYSTEM_CONTEXT.md
