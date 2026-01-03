@@ -64,12 +64,16 @@ for fn in files:
     print("  got_node_ids =", len(got))
     print("  missing =", len(missing), (missing[:6] if missing else []))
     print("  extra =", len(extra), (extra[:6] if extra else []))
+    if missing or extra:
+        print("  [FAIL] per-node coverage mismatch (missing/extra node_id).")
+        raise SystemExit(1)
 
 # --- anchors.json: validate links use valid node_ids + length matches linking skeleton ---
 anchors = load(out_dir / "anchors.json")
 if not isinstance(anchors, list):
     print("\nFILE: anchors.json")
     print("  [FAIL] anchors.json must be a list, got:", type(anchors).__name__)
+    raise SystemExit(1)
 else:
     got_ids = set()
     bad_rows = 0
@@ -87,15 +91,22 @@ else:
     print("  anchors_len =", len(anchors))
     print("  unique_node_ids_in_links =", len(got_ids))
     print("  bad_rows =", bad_rows)
+    if bad_rows > 0:
+        print("  [FAIL] anchors.json contains rows with invalid node_id(s) (not in snapshot node_registry).")
+        raise SystemExit(1)
+
 
 # --- final_artifacts.json: validate expected keys (aggregate artifact, not per-node) ---
 fa = load(out_dir / "final_artifacts.json")
 print("\nFILE: final_artifacts.json")
 if not isinstance(fa, dict):
     print("  [FAIL] must be dict, got:", type(fa).__name__)
+    raise SystemExit(1)
 else:
     ok_key = "main_summary_table" in fa and isinstance(fa.get("main_summary_table"), str) and fa["main_summary_table"].strip()
     print("  has_main_summary_table =", bool(ok_key))
-    if ok_key:
-        print("  main_summary_table_chars =", len(fa["main_summary_table"]))
-
+    if not ok_key:
+        print("  [FAIL] final_artifacts.json missing non-empty main_summary_table.")
+        raise SystemExit(1)
+    print("  main_summary_table_chars =", len(fa["main_summary_table"]))
+    

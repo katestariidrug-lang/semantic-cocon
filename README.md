@@ -812,7 +812,56 @@ python scripts/check_deliverables.py <snapshot_id>
 
 Это основа для масштабируемых и воспроизводимых LLM‑систем.
 
+## Observed & Fixed Failure Classes
 
+Этот раздел фиксирует классы отказов, выявленные при реальных smoke-test прогонах,
+и способы их устранения.  
+Цель — предотвратить повторное появление архитектурных нарушений
+и зафиксировать эволюцию контрактов системы.
+
+### INVALID_NODE_ID_IN_ANCHORS
+
+**Где выявлено:**  
+Smoke-test PASS_2 / EXECUTE
+
+**Суть проблемы:**  
+LLM сгенерировала `from_node_id / to_node_id`, отсутствующие в `node_registry`
+(snapshot), несмотря на корректную архитектуру PASS_1.
+
+**Причина:**  
+Недостаточно жёсткий контракт генерации `anchors` в PASS_2
+(отсутствие явного allowlist и запрета модификации `node_id`).
+
+**Исправление:**  
+- Усилен контракт PASS_2:
+  - `anchors` могут использовать **только** `node_id` из snapshot
+  - разрешены **только** пары из `linking_matrix_skeleton`
+- Post-check (`check_deliverables.py`) усилен:
+  - `bad_rows > 0` → BLOCKER
+
+**Статус:** FIXED
+
+### FINAL_ARTIFACTS_WRONG_TYPE
+
+**Где выявлено:**  
+Smoke-test PASS_2 / EXECUTE
+
+**Суть проблемы:**  
+`final_artifacts.json` был сгенерирован как list,
+в то время как post-check и downstream-логика ожидают агрегированный object (dict).
+
+**Причина:**  
+Неявный контракт формата `final_artifacts` в PASS_2 prompt.
+
+**Исправление:**  
+- В PASS_2 зафиксирован жёсткий контракт:
+  - `final_artifacts` — **JSON-object (dict)**
+  - обязательный ключ: `main_summary_table` (string)
+  - `artifacts` (если присутствует) — **dict**, не list
+- Post-check усилен:
+  - неверный тип `final_artifacts` → BLOCKER
+
+**Статус:** FIXED
 
 ## PRE-FLIGHT STOP CONDITIONS
 
