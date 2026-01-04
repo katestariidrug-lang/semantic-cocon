@@ -1009,3 +1009,11 @@ MERGE выполняется:
 Post-check:
 - ЗАПРЕЩЕНО выполнять post-check для CORE или ANCHORS snapshot
 - РАЗРЕШЕНО выполнять post-check ТОЛЬКО для merge_id
+
+MERGE выполняет обязательную проверку совместимости стадий:
+
+- из execution_result.json CORE и ANCHORS извлекается immutable_fingerprint
+- если fingerprint отсутствует или не совпадает — MERGE завершается с FAIL
+- MERGE разрешён только для стадий, исполненных по одному approved snapshot
+
+Это является enforcement stage-level invariants и не может быть отключено.

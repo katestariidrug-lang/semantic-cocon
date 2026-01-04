@@ -53,11 +53,30 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, merge_id: str, output
     _require_file(core_q, "core/patient_questions.json")
     _require_file(anchors_json, "anchors/anchors.json")
 
+    # --- ENFORCE SNAPSHOT COMPATIBILITY ---
+    core_exec = _read_json(core_base / "core" / "execution_result.json")
+    anchors_exec = _read_json(anchors_base / "anchors" / "execution_result.json")
+
+    core_fp = core_exec.get("immutable_fingerprint")
+    anchors_fp = anchors_exec.get("immutable_fingerprint")
+
+    if not core_fp or not anchors_fp:
+        raise SystemExit(
+            "[MERGE] FAIL: immutable_fingerprint missing in CORE or ANCHORS execution_result"
+        )
+
+    if core_fp != anchors_fp:
+        raise SystemExit(
+            "[MERGE] FAIL: immutable_fingerprint mismatch "
+            f"(CORE={core_fp}, ANCHORS={anchors_fp})"
+        )
+
+    # --- READ CORE / ANCHORS DELIVERABLES ---
     semantic_enrichment = _read_json(core_sem)
     keywords = _read_json(core_kw)
     patient_questions = _read_json(core_q)
     anchors = _read_json(anchors_json)
-
+    
     # Materialize in out_base root (deterministic)
     _write_json(out_base / "semantic_enrichment.json", semantic_enrichment)
     _write_json(out_base / "keywords.json", keywords)
@@ -66,6 +85,7 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, merge_id: str, output
 
     execution_result: Dict[str, Any] = {
         "merge_id": merge_id,
+        "immutable_fingerprint": core_fp,
         "source_snapshots": {
             "core_snapshot_id": core_snapshot_id,
             "anchors_snapshot_id": anchors_snapshot_id,
