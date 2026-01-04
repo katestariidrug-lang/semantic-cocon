@@ -160,8 +160,12 @@ def cmd_decide() -> None:
     if arch_decision.get("pass") != "DECIDE":
         raise ValueError("ARCH_DECISION_INVALID: поле pass должно быть 'DECIDE'")
 
-    # 7) зафиксировать fingerprints системных prompt-файлов в snapshot (immutable by hash)
+    # 7) зафиксировать task_id в snapshot (контракт: EXECUTE должен проверять соответствие input/task.json)
+    arch_decision["task_id"] = task_id
+
+    # 8) зафиксировать fingerprints системных prompt-файлов в snapshot (immutable by hash)
     meta = dict(arch_decision.get("meta", {}))
+
     meta["prompts_fingerprint"] = {
         "pass_1_decide_md": fingerprint_file(PASS_1_PROMPT_PATH),
         "pass_2_execute_core_md": fingerprint_file(PASS_2_PROMPT_CORE_PATH),
@@ -169,17 +173,17 @@ def cmd_decide() -> None:
     }
     arch_decision["meta"] = meta
 
-    # 7.1) зафиксировать immutable_fingerprint в snapshot (архитектурный контракт)
+    # 9) зафиксировать immutable_fingerprint в snapshot (архитектурный контракт)
     arch_decision["immutable_fingerprint"] = fingerprint_immutable_architecture(arch_decision)
 
-    # 8) сохранить snapshot+canonical+hash
+    # 10) сохранить snapshot+canonical+hash
     paths = save_snapshot(
         arch_decision_json=arch_decision,
         snapshots_dir=SNAPSHOTS_DIR,
         task_id=task_id,
     )
 
-    # 9) вывести пути (для человека и для VS Code логов)
+    # 11) вывести пути (для человека и для VS Code логов)
     print("DECIDE_OK")
     print(f"SNAPSHOT:  {paths.snapshot_path}")
     print(f"CANONICAL: {paths.canonical_path}")
@@ -222,12 +226,16 @@ def cmd_approve(snapshot_id: str) -> None:
     print("APPROVE_OK")
     print(f"APPROVAL: {approval_path}")
 
-def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str]:
+def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str, str]:
     """
     PRE-FLIGHT gate before PASS_2.
     Any failure here MUST abort before any LLM call.
-    Returns: (arch_decision_json, hash_hex)
+    Returns:
+      - arch_decision_json (validated, immutable)
+      - hash_hex           (snapshot identity, derived)
+      - immutable_fp       (authoritative, validated)
     """
+
     if not snapshot_path.exists():
         raise FileNotFoundError(f"Snapshot не найден: {snapshot_path}")
 
@@ -254,6 +262,14 @@ def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str]:
     if "immutable_fingerprint" not in arch_decision:
         raise ValueError("IMMUTABLE_FINGERPRINT_MISSING_IN_SNAPSHOT")
 
+    # IMMUTABILITY ENFORCEMENT: immutable_fingerprint must match computed value
+    immutable_fp = fingerprint_immutable_architecture(arch_decision)
+    if arch_decision.get("immutable_fingerprint") != immutable_fp:
+        raise ValueError(
+            f"IMMUTABLE_FINGERPRINT_MISMATCH: snapshot={arch_decision.get('immutable_fingerprint')} computed={immutable_fp}"
+        )
+
+
     # IMMUTABILITY ENFORCEMENT: prompt fingerprints must match snapshot
     snap_fp = (arch_decision.get("meta", {}) or {}).get("prompts_fingerprint", {}) or {}
     cur_fp = {
@@ -274,7 +290,7 @@ def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str]:
     if mismatched:
         raise ValueError(f"PROMPT_FINGERPRINT_MISMATCH: {mismatched}")
 
-    return arch_decision, hash_hex
+    return arch_decision, hash_hex, immutable_fp
 
 def cmd_execute(snapshot_path: str, stage: str) -> None:
     """
@@ -283,13 +299,19 @@ def cmd_execute(snapshot_path: str, stage: str) -> None:
     snap_path = Path(snapshot_path)
 
     # PRE-FLIGHT gate: fail-fast before any LLM call
-    arch_decision, hash_hex = preflight_execute_gate(snap_path)
+    arch_decision, hash_hex, immutable_fp = preflight_execute_gate(snap_path)
 
     # Загружаем то, что заморожено
     task = read_json(TASK_JSON_PATH)
 
-    
-    immutable_fp = fingerprint_immutable_architecture(arch_decision)
+    # FAIL-FAST: task_id в input должен совпадать с snapshot
+    snapshot_task_id = arch_decision.get("task_id")
+    runtime_task_id = task.get("task_id")
+
+    if snapshot_task_id != runtime_task_id:
+        raise ValueError(
+            f"TASK_ID_MISMATCH: snapshot={snapshot_task_id} runtime={runtime_task_id}"
+        )
 
     if stage == "core":
         pass_2_prompt = read_text(PASS_2_PROMPT_CORE_PATH)
