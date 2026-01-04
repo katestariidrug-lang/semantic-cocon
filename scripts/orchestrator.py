@@ -169,6 +169,9 @@ def cmd_decide() -> None:
     }
     arch_decision["meta"] = meta
 
+    # 7.1) зафиксировать immutable_fingerprint в snapshot (архитектурный контракт)
+    arch_decision["immutable_fingerprint"] = fingerprint_immutable_architecture(arch_decision)
+
     # 8) сохранить snapshot+canonical+hash
     paths = save_snapshot(
         arch_decision_json=arch_decision,
@@ -219,22 +222,20 @@ def cmd_approve(snapshot_id: str) -> None:
     print("APPROVE_OK")
     print(f"APPROVAL: {approval_path}")
 
-
-def cmd_execute(snapshot_path: str, stage: str) -> None:
+def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str]:
     """
-    PASS_2 выполняется ТОЛЬКО если:
-      1) snapshot hash верифицируется
-      2) существует approvals/<hash>.approved
+    PRE-FLIGHT gate before PASS_2.
+    Any failure here MUST abort before any LLM call.
+    Returns: (arch_decision_json, hash_hex)
     """
-    snap_path = Path(snapshot_path)
-    if not snap_path.exists():
-        raise FileNotFoundError(f"Snapshot не найден: {snap_path}")
+    if not snapshot_path.exists():
+        raise FileNotFoundError(f"Snapshot не найден: {snapshot_path}")
 
-    hash_path = Path(str(snap_path).replace(".snapshot.json", ".sha256"))
+    hash_path = Path(str(snapshot_path).replace(".snapshot.json", ".sha256"))
     if not hash_path.exists():
         raise FileNotFoundError(f"Hash file не найден: {hash_path}")
 
-    ok, msg = verify_snapshot_files(snap_path, hash_path)
+    ok, msg = verify_snapshot_files(snapshot_path, hash_path)
     if not ok:
         raise ValueError(f"VERIFY_FAIL: {msg}")
 
@@ -246,21 +247,14 @@ def cmd_execute(snapshot_path: str, stage: str) -> None:
     if not approval_path.exists():
         raise PermissionError(f"NO_APPROVAL: нет файла подтверждения {approval_path}")
 
-    # Загружаем то, что заморожено
-    task = read_json(TASK_JSON_PATH)
-    arch_decision = read_json(snap_path)
-    
-    immutable_fp = fingerprint_immutable_architecture(arch_decision)
+    arch_decision = read_json(snapshot_path)
 
-    if stage == "core":
-        pass_2_prompt = read_text(PASS_2_PROMPT_CORE_PATH)
-    elif stage == "anchors":
-        pass_2_prompt = read_text(PASS_2_PROMPT_ANCHORS_PATH)
-    else:
-        raise ValueError(f"UNKNOWN_STAGE: {stage}")
+    # README требует immutable_fingerprint как обязательный маркер snapshot-совместимости.
+    # Если его нет — это BLOCKER до любого PASS_2.
+    if "immutable_fingerprint" not in arch_decision:
+        raise ValueError("IMMUTABLE_FINGERPRINT_MISSING_IN_SNAPSHOT")
 
-
-    # --- IMMUTABILITY ENFORCEMENT: prompt fingerprints must match snapshot ---
+    # IMMUTABILITY ENFORCEMENT: prompt fingerprints must match snapshot
     snap_fp = (arch_decision.get("meta", {}) or {}).get("prompts_fingerprint", {}) or {}
     cur_fp = {
         "pass_1_decide_md": fingerprint_file(PASS_1_PROMPT_PATH),
@@ -272,9 +266,38 @@ def cmd_execute(snapshot_path: str, stage: str) -> None:
     if missing_keys:
         raise ValueError(f"PROMPT_FINGERPRINT_MISSING_IN_SNAPSHOT: missing={missing_keys}")
 
-    mismatched = {k: {"snapshot": snap_fp.get(k), "current": cur_fp.get(k)} for k in cur_fp.keys() if snap_fp.get(k) != cur_fp.get(k)}
+    mismatched = {
+        k: {"snapshot": snap_fp.get(k), "current": cur_fp.get(k)}
+        for k in cur_fp.keys()
+        if snap_fp.get(k) != cur_fp.get(k)
+    }
     if mismatched:
         raise ValueError(f"PROMPT_FINGERPRINT_MISMATCH: {mismatched}")
+
+    return arch_decision, hash_hex
+
+def cmd_execute(snapshot_path: str, stage: str) -> None:
+    """
+    PASS_2 выполняется ТОЛЬКО если PRE-FLIGHT gate пройден (до любого вызова LLM).
+    """
+    snap_path = Path(snapshot_path)
+
+    # PRE-FLIGHT gate: fail-fast before any LLM call
+    arch_decision, hash_hex = preflight_execute_gate(snap_path)
+
+    # Загружаем то, что заморожено
+    task = read_json(TASK_JSON_PATH)
+
+    
+    immutable_fp = fingerprint_immutable_architecture(arch_decision)
+
+    if stage == "core":
+        pass_2_prompt = read_text(PASS_2_PROMPT_CORE_PATH)
+    elif stage == "anchors":
+        pass_2_prompt = read_text(PASS_2_PROMPT_ANCHORS_PATH)
+    else:
+        raise ValueError(f"UNKNOWN_STAGE: {stage}")
+
 
     # Собираем запрос PASS_2
     request = {
