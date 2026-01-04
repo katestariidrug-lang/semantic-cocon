@@ -18,7 +18,13 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
-from scripts.state_utils import save_snapshot, verify_snapshot_files, fingerprint_immutable_architecture
+from scripts.state_utils import (
+    save_snapshot,
+    verify_snapshot_files,
+    fingerprint_immutable_architecture,
+    fingerprint_file,
+    read_sha256_file,
+)
 
 ROOT = Path(__file__).resolve().parents[1]  # project-root/
 PROMPTS_DIR = ROOT / "prompts"
@@ -30,7 +36,8 @@ SNAPSHOTS_DIR = STATE_DIR / "snapshots"
 APPROVALS_DIR = STATE_DIR / "approvals"
 
 PASS_1_PROMPT_PATH = PROMPTS_DIR / "pass_1_decide.md"
-PASS_2_PROMPT_PATH = PROMPTS_DIR / "pass_2_execute.md"
+PASS_2_PROMPT_CORE_PATH = PROMPTS_DIR / "pass_2_execute_core.md"
+PASS_2_PROMPT_ANCHORS_PATH = PROMPTS_DIR / "pass_2_execute_anchors.md"
 
 TASK_JSON_PATH = INPUT_DIR / "task.json"
 ARCH_SCHEMA_PATH = STATE_DIR / "arch_decision_schema.json"
@@ -81,18 +88,20 @@ def build_pass_1_request(task_json: Dict[str, Any], arch_schema_json: Dict[str, 
 def extract_json_strict(text: str) -> Dict[str, Any]:
     """
     Строго ожидаем, что ответ = JSON-объект, без префиксов/суффиксов.
-    Если модель добавила лишний текст — это ошибка ранна.
+    Допускается наличие BOM или служебных символов в начале.
     """
-    s = text.strip()
+    # нормализация (BOM + переносы строк)
+    # BOM + типичный "невидимый мусор" из CLI/копипаста
+    s = text.lstrip("\ufeff\u200b\u200e\u200f\u2060").strip()
+
     if not (s.startswith("{") and s.endswith("}")):
         raise ValueError("LLM_OUTPUT_NOT_PURE_JSON: ответ не является чистым JSON-объектом")
+
     try:
         return json.loads(s)
     except json.JSONDecodeError as e:
         raise ValueError(f"LLM_OUTPUT_INVALID_JSON: {e}") from e
 
-
-import subprocess
 
 RUNTIME_DIR = STATE_DIR / "runtime"
 REQ_PATH = RUNTIME_DIR / "last_request.txt"
@@ -151,14 +160,23 @@ def cmd_decide() -> None:
     if arch_decision.get("pass") != "DECIDE":
         raise ValueError("ARCH_DECISION_INVALID: поле pass должно быть 'DECIDE'")
 
-    # 7) сохранить snapshot+canonical+hash
+    # 7) зафиксировать fingerprints системных prompt-файлов в snapshot (immutable by hash)
+    meta = dict(arch_decision.get("meta", {}))
+    meta["prompts_fingerprint"] = {
+        "pass_1_decide_md": fingerprint_file(PASS_1_PROMPT_PATH),
+        "pass_2_execute_core_md": fingerprint_file(PASS_2_PROMPT_CORE_PATH),
+        "pass_2_execute_anchors_md": fingerprint_file(PASS_2_PROMPT_ANCHORS_PATH),
+    }
+    arch_decision["meta"] = meta
+
+    # 8) сохранить snapshot+canonical+hash
     paths = save_snapshot(
         arch_decision_json=arch_decision,
         snapshots_dir=SNAPSHOTS_DIR,
         task_id=task_id,
     )
 
-    # 8) вывести пути (для человека и для VS Code логов)
+    # 9) вывести пути (для человека и для VS Code логов)
     print("DECIDE_OK")
     print(f"SNAPSHOT:  {paths.snapshot_path}")
     print(f"CANONICAL: {paths.canonical_path}")
@@ -169,40 +187,40 @@ def approval_file_for_hash(hash_hex: str) -> Path:
     return APPROVALS_DIR / f"{hash_hex}.approved"
 
 
-def cmd_approve(snapshot_path: str) -> None:
+def cmd_approve(snapshot_id: str) -> None:
     """
-    Человеческое подтверждение конкретного snapshot.
-    Сценарий:
-      - ты смотришь snapshot
-      - если ок — создаём файл approvals/<hash>.approved
+    Механизация human step: создать файл approvals/<hash>.approved
+    по уже существующему state/snapshots/<snapshot_id>.sha256.
+
+    ВАЖНО:
+    - НЕ проверяет корректность snapshot
+    - НЕ выполняет verify / gate
+    - НЕ принимает решение "можно ли approve"
     """
-    snap_path = Path(snapshot_path)
-    if not snap_path.exists():
-        raise FileNotFoundError(f"Snapshot не найден: {snap_path}")
-
-    # hash рядом, по имени (task__prefix.sha256)
-    hash_path = snap_path.with_suffix("").with_suffix(".sha256")  # .snapshot.json -> .sha256
-    # если не угадали суффикс, попробуем простой вариант:
+    hash_path = SNAPSHOTS_DIR / f"{snapshot_id}.sha256"
     if not hash_path.exists():
-        # fallback: заменить ".snapshot.json" на ".sha256"
-        hash_path = Path(str(snap_path).replace(".snapshot.json", ".sha256"))
-    if not hash_path.exists():
-        raise FileNotFoundError(f"Hash file не найден рядом со snapshot: {hash_path}")
+        raise FileNotFoundError(f"Hash file не найден: {hash_path}")
 
-    ok, msg = verify_snapshot_files(snap_path, hash_path)
-    if not ok:
-        raise ValueError(f"VERIFY_FAIL: {msg}")
+    hash_hex = read_sha256_file(hash_path)
+    if not hash_hex:
+        raise ValueError(f"EMPTY_SHA256_FILE: {hash_path}")
 
-    hash_hex = hash_path.read_text(encoding="utf-8").strip()
     APPROVALS_DIR.mkdir(parents=True, exist_ok=True)
     approval_path = approval_file_for_hash(hash_hex)
+
+    # идемпотентность: если уже есть — не падаем
+    if approval_path.exists():
+        print("APPROVE_OK")
+        print(f"APPROVAL: {approval_path}")
+        return
+
     approval_path.write_text("approved\n", encoding="utf-8")
 
     print("APPROVE_OK")
     print(f"APPROVAL: {approval_path}")
 
 
-def cmd_execute(snapshot_path: str) -> None:
+def cmd_execute(snapshot_path: str, stage: str) -> None:
     """
     PASS_2 выполняется ТОЛЬКО если:
       1) snapshot hash верифицируется
@@ -220,7 +238,10 @@ def cmd_execute(snapshot_path: str) -> None:
     if not ok:
         raise ValueError(f"VERIFY_FAIL: {msg}")
 
-    hash_hex = hash_path.read_text(encoding="utf-8").strip()
+    hash_hex = read_sha256_file(hash_path)
+    if not hash_hex:
+        raise ValueError(f"EMPTY_SHA256_FILE: {hash_path}")
+
     approval_path = approval_file_for_hash(hash_hex)
     if not approval_path.exists():
         raise PermissionError(f"NO_APPROVAL: нет файла подтверждения {approval_path}")
@@ -231,13 +252,36 @@ def cmd_execute(snapshot_path: str) -> None:
     
     immutable_fp = fingerprint_immutable_architecture(arch_decision)
 
-    pass_2_prompt = read_text(PASS_2_PROMPT_PATH)
+    if stage == "core":
+        pass_2_prompt = read_text(PASS_2_PROMPT_CORE_PATH)
+    elif stage == "anchors":
+        pass_2_prompt = read_text(PASS_2_PROMPT_ANCHORS_PATH)
+    else:
+        raise ValueError(f"UNKNOWN_STAGE: {stage}")
 
-    # Собираем запрос PASS_2 (сделаем нормально на следующем шаге)
+
+    # --- IMMUTABILITY ENFORCEMENT: prompt fingerprints must match snapshot ---
+    snap_fp = (arch_decision.get("meta", {}) or {}).get("prompts_fingerprint", {}) or {}
+    cur_fp = {
+        "pass_1_decide_md": fingerprint_file(PASS_1_PROMPT_PATH),
+        "pass_2_execute_core_md": fingerprint_file(PASS_2_PROMPT_CORE_PATH),
+        "pass_2_execute_anchors_md": fingerprint_file(PASS_2_PROMPT_ANCHORS_PATH),
+    }
+
+    missing_keys = [k for k in cur_fp.keys() if k not in snap_fp]
+    if missing_keys:
+        raise ValueError(f"PROMPT_FINGERPRINT_MISSING_IN_SNAPSHOT: missing={missing_keys}")
+
+    mismatched = {k: {"snapshot": snap_fp.get(k), "current": cur_fp.get(k)} for k in cur_fp.keys() if snap_fp.get(k) != cur_fp.get(k)}
+    if mismatched:
+        raise ValueError(f"PROMPT_FINGERPRINT_MISMATCH: {mismatched}")
+
+    # Собираем запрос PASS_2
     request = {
         "TASK_JSON": task,
         "ARCH_DECISION_JSON": arch_decision
     }
+
     request_text = (
         pass_2_prompt.strip()
         + "\n\n"
@@ -252,7 +296,7 @@ def cmd_execute(snapshot_path: str) -> None:
     llm_text = run_llm(request_text)
 
     # 1) сохранить сырой ответ
-    out_dir = OUTPUTS_DIR / "pass_2" / f"{task.get('task_id','task')}__{hash_hex[:12]}"
+    out_dir = OUTPUTS_DIR / "pass_2" / f"{task.get('task_id','task')}__{hash_hex[:12]}" / stage
     out_dir.mkdir(parents=True, exist_ok=True)
 
     raw_path = out_dir / "execution_result.raw.txt"
@@ -276,36 +320,28 @@ def cmd_execute(snapshot_path: str) -> None:
 
     # 4) разложить deliverables по отдельным файлам
     deliverables = exec_json.get("deliverables", {})
-    parts = {
-        "semantic_enrichment": "semantic_enrichment.json",
-        "keywords": "keywords.json",
-        "anchors": "anchors.json",
-        "patient_questions": "patient_questions.json",
-        "final_artifacts": "final_artifacts.json",
-    }
+    if stage == "core":
+        parts = {
+            "semantic_enrichment": "semantic_enrichment.json",
+            "keywords": "keywords.json",
+            "patient_questions": "patient_questions.json",
+        }
+    elif stage == "anchors":
+        parts = {
+            "anchors": "anchors.json",
+        }
+    else:
+        raise ValueError(f"UNKNOWN_STAGE: {stage}")
+
 
     for key, filename in parts.items():
         part_path = out_dir / filename
         write_json_pretty(part_path, deliverables.get(key, {}))
 
-    # --- POST-CHECK: validate deliverables ---
-    check_script = ROOT / "scripts" / "check_deliverables.py"
-    if not check_script.exists():
-        raise FileNotFoundError(f"Post-check script not found: {check_script}")
-
-    snapshot_id = snap_path.stem.replace(".snapshot", "")
-    res = subprocess.run(
-        [sys.executable, str(check_script), snapshot_id],
-        cwd=ROOT,
-    )
-
-    if res.returncode != 0:
-        raise RuntimeError("DELIVERABLES_CHECK_FAILED")
-
-    print("DELIVERABLES_OK")
+    # NOTE: Post-check is executed after CORE+ANCHORS merge (next step).
+    # Running it per-stage would fail by design (missing stage-specific deliverables).
+    
     print("EXECUTE_OK")
-    print(f"RAW:  {raw_path}")
-    print(f"JSON: {json_path}")
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="orchestrator", description="Two-pass LLM workflow orchestrator")
@@ -313,11 +349,17 @@ def main(argv: list[str]) -> int:
 
     sub.add_parser("decide", help="Run PASS_1 (DECIDE)")
 
-    p_approve = sub.add_parser("approve", help="Approve a snapshot (human step)")
-    p_approve.add_argument("--snapshot", required=True, help="Path to *.snapshot.json")
+    p_approve = sub.add_parser("approve", help="Approve a snapshot (human step, mechanized)")
+    p_approve.add_argument("--snapshot", required=True, help="snapshot_id (without extensions)")
 
     p_execute = sub.add_parser("execute", help="Run PASS_2 (EXECUTE) with verified+approved snapshot")
     p_execute.add_argument("--snapshot", required=True, help="Path to *.snapshot.json")
+    p_execute.add_argument(
+        "--stage",
+        choices=["core", "anchors"],
+        required=True,
+        help="PASS_2 stage: core or anchors"
+    )
 
     args = parser.parse_args(argv)
 
@@ -327,7 +369,7 @@ def main(argv: list[str]) -> int:
         elif args.cmd == "approve":
             cmd_approve(args.snapshot)
         elif args.cmd == "execute":
-            cmd_execute(args.snapshot)
+            cmd_execute(args.snapshot, args.stage)
         else:
             raise ValueError(f"Unknown command: {args.cmd}")
         return 0

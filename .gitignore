@@ -17,18 +17,11 @@ state/approvals/
 state/snapshots/
 
 # local / working files
-<<<<<<< HEAD
-work_step.ini
 to_do.md
-
-# internal context (not part of public repo)
-SYSTEM_CONTEXT.md
-=======
-to_do.md
-
-# internal context (not part of public repo)
 SYSTEM_CONTEXT.md
 .vscode/
 docs/
 work_step.txt
->>>>>>> 6437326 (Фиксация архитектуры PASS_1/PASS_2, удаление legacy-скрипта, обновление .gitignore)
+
+SYSTEM_CONTEXT.md
+

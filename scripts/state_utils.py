@@ -24,10 +24,40 @@ def canonicalize_json(obj: Any) -> str:
     """
     return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
-
 def sha256_hex(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
+
+def read_sha256_file(hash_path: Path) -> str:
+    """
+    Читает sha256 из файла.
+    Контракт: берём первую непустую строку, чтобы комментарии/мусор ниже не ломали логику.
+    """
+    raw = hash_path.read_text(encoding="utf-8")
+    for line in raw.splitlines():
+        s = line.strip()
+        if s:
+            return s
+    return ""
+
+def canonicalize_text(text: str) -> str:
+    """
+    Канонизация текста для детерминированного fingerprint:
+    - нормализуем переносы строк
+    - убираем BOM
+    """
+    s = text.replace("\r\n", "\n").replace("\r", "\n")
+    if s.startswith("\ufeff"):
+        s = s.lstrip("\ufeff")
+    return s
+
+def fingerprint_file(path: Path) -> str:
+    """
+    Fingerprint файла как sha256 канонизированного текста.
+    Используется для фиксации версий prompt-файлов в snapshot.
+    """
+    raw = path.read_text(encoding="utf-8")
+    return sha256_hex(canonicalize_text(raw))
 
 def compute_snapshot_hash(arch_decision_json: Dict[str, Any]) -> Tuple[str, str]:
     """
@@ -109,7 +139,9 @@ def verify_snapshot_files(snapshot_path: Path, hash_path: Path) -> Tuple[bool, s
     - пересчитывает hash
     """
     arch = load_json(snapshot_path)
-    expected = hash_path.read_text(encoding="utf-8").strip()
+    expected = read_sha256_file(hash_path)
+    if not expected:
+        return False, f"EMPTY_SHA256_FILE: {hash_path}"
     ok, msg = verify_snapshot_content(arch, expected)
     return ok, msg
 

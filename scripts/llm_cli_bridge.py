@@ -1,11 +1,3 @@
-"""
-ФАЙЛ: scripts/llm_cli_bridge.py
-НАЗНАЧЕНИЕ: Мост между orchestrator и конкретным LLM-провайдером.
-СЕЙЧАС: тестовый режим (dummy), который:
-  - для PASS_1 возвращает ARCH_DECISION_JSON с заполненным task
-  - для PASS_2 возвращает EXECUTION_RESULT_JSON (минимальный каркас)
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -48,9 +40,12 @@ def main() -> int:
     model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
     model = genai.GenerativeModel(
         model_name,
-        generation_config={"temperature": 0},
+        generation_config={
+            "temperature": 0,
+            # PASS_2 может быть большим (18 узлов + per-node deliverables)
+            "max_output_tokens": 32768,
+        },
     )
-
 
     # Определяем режим по заголовку промпта
     is_decide = "# PASS_1 / DECIDE" in inp
@@ -65,16 +60,56 @@ def main() -> int:
 
     if is_decide:
         resp = model.generate_content(inp)
+
+        finish_reason = None
+        try:
+            finish_reason = resp.candidates[0].finish_reason
+        except Exception:
+            pass
+
         output_text = resp.text or ""
+        print(f"[llm_cli_bridge] output length = {len(output_text)} chars")
+
+        reason_str = None
+        try:
+            reason_str = finish_reason.name  # Enum-like
+        except Exception:
+            reason_str = str(finish_reason) if finish_reason is not None else None
+
+        if reason_str and reason_str not in ("STOP", "FinishReason.STOP"):
+            raise RuntimeError(f"LLM_OUTPUT_TRUNCATED: finish_reason={finish_reason}")
+
+
         Path(args.out).write_text(output_text, encoding="utf-8")
         return 0
 
+
     # PASS_2: EXECUTE
-    # Для теста отдаём минимально валидный каркас результата.
     resp = model.generate_content(inp)
+
+    # Gemini может молча обрезать ответ по лимиту
+    finish_reason = None
+    try:
+        finish_reason = resp.candidates[0].finish_reason
+    except Exception:
+        pass
+
     output_text = resp.text or ""
+    print(f"[llm_cli_bridge] output length = {len(output_text)} chars")
+
+    reason_str = None
+    try:
+        reason_str = finish_reason.name  # Enum-like
+    except Exception:
+        reason_str = str(finish_reason) if finish_reason is not None else None
+
+    if reason_str and reason_str not in ("STOP", "FinishReason.STOP"):
+        raise RuntimeError(f"LLM_OUTPUT_TRUNCATED: finish_reason={finish_reason}")
+
+
     Path(args.out).write_text(output_text, encoding="utf-8")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

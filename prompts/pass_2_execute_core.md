@@ -49,54 +49,59 @@ EXECUTION_RESULT_JSON ОБЯЗАН содержать:
 - "task" — копию ключевых полей TASK_JSON
 - "used_snapshot_hash" — строку (оставь пустой, Python может заполнить)
 - "deliverables" — объект со следующими ключами:
+
+  PER-NODE COVERAGE (HARD REQUIREMENT)
+  - Для каждого per-node deliverable ("semantic_enrichment", "keywords", "patient_questions"):
+    ОБЯЗАТЕЛЬНО должны присутствовать записи ДЛЯ ВСЕХ node_id из
+    ARCH_DECISION_JSON.immutable_architecture.node_registry.
+  - Это включает node_type=SUPPORT.
+  - Для SUPPORT допускается минимальный объём:
+    - keywords: 2–4 фразы
+    - patient_questions: 1–2 вопроса
+    - semantic_enrichment: 1 короткое предложение
+  - Отсутствие любого node_id в любом per-node deliverable = CRITICAL VIOLATION.
+
   - "semantic_enrichment" — per-node интенты и coverage-заметки
     (БЕЗ длинных текстов, БЕЗ расширения смысла узла)
         Правила:
+
     - semantic_enrichment описывает ТОЛЬКО то, что уже заложено в intent/title узла из immutable_architecture.node_registry.
     - Запрещено добавлять новые медицинские сущности или под-темы, которые по смыслу создают новый узел или страницу.
     - Если в ARCH_DECISION_JSON присутствуют clinical_entity_registry и salient_terms,
       semantic_enrichment ОБЯЗАН быть согласован с ними как с источником допустимых клинических аспектов.
 
-  - "keywords" — группы ключевых слов по каждому node_id
-  - "anchors" — варианты анкоров
-    для каждой разрешённой пары (from_node_id, to_node_id)
+  - "keywords" — группы ключевых слов по каждому node_id (ОБЯЗАТЕЛЬНО: coverage для ВСЕХ node_id, включая SUPPORT)
+  - "patient_questions" — список вопросов пациента по каждому node_id (ОБЯЗАТЕЛЬНО: coverage для ВСЕХ node_id, включая SUPPORT)
 
-    ЖЁСТКИЙ КОНТРАКТ (ОБЯЗАТЕЛЬНО):
-    - from_node_id и to_node_id ДОЛЖНЫ:
-      - в точности совпадать со значениями node_id из immutable_architecture.node_registry
-      - и соответствовать ТОЛЬКО парам,
-        перечисленным в immutable_architecture.linking_matrix_skeleton
-    - Запрещено:
-      - придумывать новые node_id
-      - модифицировать существующие node_id (перестановка слов, сокращения, синонимы, reordering — ЗАПРЕЩЕНО)
-      - генерировать anchors для пар, отсутствующих в linking_matrix_skeleton
-    - Если для разрешённой пары невозможно сгенерировать корректный anchor — НЕ генерируй запись вообще.
+  ЗАПРЕТ (CRITICAL):
+  - deliverables MUST NOT contain "anchors".
+  - If "anchors" key is present anywhere in EXECUTION_RESULT_JSON → CRITICAL VIOLATION.
 
-    - "patient_questions" — список вопросов пациента по каждому node_id
-    Правила:
-    - вопросы формулируются СТРОГО в рамках node_id и его intent/title из immutable_architecture.node_registry.
-    - запрещено вводить новые заболевания/симптомы/методы, отсутствующие в node_registry и/или clinical_entity_registry.
-    - вопросы не должны создавать ощущение, что архитектуру нужно "дополнить" или "исправить":
-      PASS_2 не расширяет scope и не подменяет границы узлов.
-    - "final_artifacts" — агрегированный объект (dict) БЕЗ нарратива
-    и БЕЗ контента, готового к публикации.
 
-    ЖЁСТКИЙ КОНТРАКТ:
-    - final_artifacts ОБЯЗАН быть JSON-объектом (dict)
-    - final_artifacts ОБЯЗАН содержать:
-      - "main_summary_table" — непустую строку (markdown-таблица допустима)
+  Правила:
+  - вопросы формулируются СТРОГО в рамках node_id и его intent/title из immutable_architecture.node_registry.
+  - запрещено вводить новые заболевания/симптомы/методы, отсутствующие в node_registry и/или clinical_entity_registry.
+  - вопросы не должны создавать ощущение, что архитектуру нужно "дополнить" или "исправить":
+    PASS_2 не расширяет scope и не подменяет границы узлов.
+  - "final_artifacts" — агрегированный объект (dict) БЕЗ нарратива
+  и БЕЗ контента, готового к публикации.
 
-    - final_artifacts МОЖЕТ содержать:
-      - "artifacts" — JSON-объект (dict), где:
-        - ключ = стабильный идентификатор артефакта (snake_case),
-          например: "diagnostic_summary_table"
-        - значение = строка (markdown/plain) ИЛИ вложенный dict (если нужно),
-          но НЕ список
+  ЖЁСТКИЙ КОНТРАКТ:
+  - final_artifacts ОБЯЗАН быть JSON-объектом (dict)
+  - final_artifacts ОБЯЗАН содержать:
+    - "main_summary_table" — непустую строку (markdown-таблица допустима)
 
-    ЗАПРЕЩЕНО:
-    - возвращать final_artifacts как list
-    - возвращать artifacts как list
-    - использовать произвольные ключи, зависящие от темы (кроме согласованных)
+  - final_artifacts МОЖЕТ содержать:
+    - "artifacts" — JSON-объект (dict), где:
+      - ключ = стабильный идентификатор артефакта (snake_case),
+        например: "diagnostic_summary_table"
+      - значение = строка (markdown/plain) ИЛИ вложенный dict (если нужно),
+        но НЕ список
+
+  ЗАПРЕЩЕНО:
+  - возвращать final_artifacts как list
+  - возвращать artifacts как list
+  - использовать произвольные ключи, зависящие от темы (кроме согласованных)
 
 
 ## QUALITY RULES
@@ -107,7 +112,7 @@ EXECUTION_RESULT_JSON ОБЯЗАН содержать:
   (никаких свободных названий узлов).
 
 CRITICAL: SOURCE OF TRUTH = ARCH_DECISION_JSON (ЗАПРЕТ НОВЫХ МЕДИЦИНСКИХ СУЩНОСТЕЙ)
-- Все deliverables (semantic_enrichment, keywords, patient_questions, anchors) ОБЯЗАНЫ быть производными от:
+- Все deliverables (semantic_enrichment, keywords, patient_questions) ОБЯЗАНЫ быть производными от:
   - immutable_architecture.node_registry (node_id, node_type, intent, title),
   - и, если присутствует в snapshot: clinical_entity_registry и его salient_terms.
 - Запрещено вводить новые медицинские сущности (заболевания, симптомы, методы диагностики/лечения, осложнения),

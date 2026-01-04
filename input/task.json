@@ -1,16 +1,33 @@
-{
-  "task_id": "demo_001",
-  "domain": "fomin-clinic.ru",
-  "region": "Россия",
-  "strategic_goal": "topical_authority",
-  "main_topic": "норма сахара в крови",
-  "constraints": {
-    "no_agent_mode": true,
-    "no_self_audit": true,
-    "immutability_outside_llm_only": true
-  },
-  "inputs": {
-    "user_keywords": [],
-    "notes": ""
+{ 
+  "task_id": "001-adenoz-molochnoj-zhelezy", 
+  "main_topic": "аденоз молочной железы", 
+  "domain": "fomin-clinic.ru", 
+  "region": "Россия", 
+  "strategic_goal": "topical_authority", 
+  "constraints": { 
+    "no_agent_mode": true, 
+    "_no_agent_mode_comment": "Запрещает LLM вести себя как агент: планировать шаги, предлагать следующий этап, управлять workflow или принимать решения о продолжении процесса.", 
+    "no_self_audit": true, 
+    "_no_self_audit_comment": "Запрещает LLM проверять собственный результат, делать self-validation, писать 'проверь', 'убедись', 'если не получилось — исправь'. Контроль выполняется только внешним кодом.", 
+    "immutability_outside_llm_only": true, 
+    "_immutability_outside_llm_only_comment": "Контроль immutability snapshot (hash, approve, verify) выполняется строго вне LLM. Модели запрещено проверять состояние, hash или решать, можно ли продолжать PASS_2." 
+  }, 
+  "inputs": { 
+    "user_keywords": [ 
+      "аденоз молочных желез что это такое", 
+      "очаговый аденоз молочной железы", 
+      "диффузный аденоз молочной железы что это", 
+      "аденоз молочной железы", 
+      "аденоз молочных желез", 
+      "участок аденоза в молочной железе что это", 
+      "очаговый аденоз молочной железы что это такое", 
+      "очаговый аденоз", 
+      "аденоз", 
+      "диффузный аденоз", 
+      "аденоз молочной железы что это такое", 
+      "аденоз молочных желез на маммографии", 
+      "что такое аденоз"
+    ], 
+    "notes": "" 
   }
 }
