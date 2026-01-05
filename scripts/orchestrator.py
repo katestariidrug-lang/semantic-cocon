@@ -252,11 +252,20 @@ def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str, st
     if not hash_hex:
         raise ValueError(f"EMPTY_SHA256_FILE: {hash_path}")
 
-    approval_path = approval_file_for_hash(hash_hex)
-    if not approval_path.exists():
-        raise PermissionError(f"NO_APPROVAL: нет файла подтверждения {approval_path}")
-
+    # STOP-CONDITION: EXECUTE запрещён после MERGE
+    # Authoritative source of truth: state/merges/by_run/<task_id>__<hashprefix>.merge_id
     arch_decision = read_json(snapshot_path)
+    task_id = arch_decision.get("task_id") or "task"
+    hashprefix = hash_hex[:12]
+
+    merges_by_run_dir = STATE_DIR / "merges" / "by_run"
+    merge_ptr = merges_by_run_dir / f"{task_id}__{hashprefix}.merge_id"
+
+    if merge_ptr.exists():
+        merge_id = merge_ptr.read_text(encoding="utf-8").strip()
+        raise RuntimeError(
+            f"LIFECYCLE_VIOLATION: EXECUTE запрещён после MERGE (run уже смёржен: merge_id={merge_id})"
+        )
 
     # README требует immutable_fingerprint как обязательный маркер snapshot-совместимости.
     # Если его нет — это BLOCKER до любого PASS_2.
