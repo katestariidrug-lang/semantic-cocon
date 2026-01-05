@@ -265,35 +265,52 @@ PASS_2 — строгое исполнение зафиксированной а
 v
 [snapshot.json] -----> [sha256]
 | |
-| | identifies immutable_architecture
+| | identifies immutable_architecture (immutable_fingerprint + prompts fingerprints)
 v v
 [approve] (POINT OF NO RETURN)
 |
 | unlocks
 v
-[execute / PASS_2]
+[execute / PASS_2A CORE]
 |
-| produces
+| then
 v
-[outputs] -> (post-check deliverables required)
+[execute / PASS_2B ANCHORS]
+|
+| then (external, deterministic)
+v
+[MERGE]
+|
+| only then
+v
+[post-check]
 
 ```
 
-DECIDE  
-→ snapshot.json  
-→ sha256  
-→ approve  
-→ execute  
-→ outputs  
+DECIDE
+→ snapshot.json
+→ sha256
+→ approve
+→ EXECUTE CORE
+→ EXECUTE ANCHORS
+→ MERGE
+→ post-check
+
+Запреты (не обсуждаются):
+- post-check запрещён до MERGE (post-check выполняется только по merge_id).
+- EXECUTE (CORE/ANCHORS) запрещён после MERGE для данного snapshot и данного merge_id, включая попытки запуска с флагом `--force`.
+- MERGE запрещён, если immutable_fingerprint (и prompts fingerprints) не совпадают между snapshot и текущим окружением.
 
 Где:
-
 - **DECIDE** — PASS_1 принимает архитектурные решения и формирует snapshot-кандидат.
-- **snapshot.json** — файл архитектурного решения (вместе с fingerprint prompts и ссылкой на входные данные).
+- **snapshot.json** — файл архитектурного решения (вместе с fingerprints prompts и ссылкой на входные данные).
 - **sha256** — детерминированный hash immutable-части snapshot (архитектура + fingerprints prompts).
-- **approve** — человеческая точка ответственности: создаётся approval-файл для hash.
-- **execute** — PASS_2 исполняет snapshot, строго без архитектурных изменений.
-- **outputs** — deliverables PASS_2 + служебные артефакты выполнения, далее обязательный post-check.
+- **approve** — человеческая точка ответственности: создаётся approval-файл для hash (POINT OF NO RETURN).
+- **EXECUTE CORE** — PASS_2A исполняет per-node deliverables строго по approved snapshot.
+- **EXECUTE ANCHORS** — PASS_2B исполняет link-level deliverables строго по тому же approved snapshot.
+- **MERGE** — внешний детерминированный шаг (Python), объединяет CORE + ANCHORS и валидирует совпадение immutable_fingerprint.
+- **post-check** — разрешён только для merge_id, до MERGE запрещён.
+
 
 ### Точка невозврата
 
@@ -387,14 +404,18 @@ Workflow состоит из **двух жёстко разделённых пр
 
 ```
 DECIDE
-  ↓
+↓
 SNAPSHOT + HASH
-  ↓
+↓
 APPROVE (human)
-  ↓
-EXECUTE
-  ↓
-POST-CHECK (deliverables)
+↓
+EXECUTE CORE
+↓
+EXECUTE ANCHORS
+↓
+MERGE (external, deterministic)
+↓
+POST-CHECK (deliverables, merge_id only)
 ```
 
 Каждый шаг либо проходит валидацию, либо останавливает процесс.
@@ -1085,3 +1106,16 @@ MERGE выполняет обязательную проверку совмес�
 При нарушении любого условия PASS_2 **НЕ запускается**
 (ни CORE, ни ANCHORS). Процесс завершается с ненулевым exit code.
 
+## Merge State Contract (authoritative)
+
+MERGE является детерминированным внешним шагом и фиксируется как состояние в `state/`.
+
+### Authoritative merge state
+- `state/merges/<merge_id>.json` — canonical record MERGE.
+- `state/merges/by_run/<task_id>__<hashprefix>.merge_id` — pointer для конкретного run.
+
+MERGE считается выполненным только при наличии обоих файлов.
+
+### Invariants
+- `immutable_fingerprint` в `state/merges/<merge_id>.json` MUST equal computed fingerprint for the approved snapshot.
+- После появления merge-state любые попытки `execute --stage core|anchors` MUST FAIL (даже при `--force`).
