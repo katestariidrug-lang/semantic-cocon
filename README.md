@@ -89,13 +89,19 @@ python -m scripts.orchestrator execute \
   --stage anchors \
   --snapshot state/snapshots/<snapshot_id>.snapshot.json
 
-# POST-CHECK — выполняется ТОЛЬКО после merge core + anchors
+# MERGE — обязательный шаг (external, deterministic)
+python -m scripts.merge_pass2 \
+  --core-snapshot-id <snapshot_id> \
+  --anchors-snapshot-id <snapshot_id>
+
+# merge_id печатается в stdout merge_pass2 (строка вида: [MERGE] merge_id = ...)
+# POST-CHECK — выполняется ТОЛЬКО по merge_id
 python scripts/check_deliverables.py <merge_id>
 
 ```
 
 ⚠️ Повторный запуск execute для того же snapshot и stage запрещён по умолчанию.
-Для принудительной перегенерации требуется флаг --force.
+`--force` разрешает перегенерацию только ДО MERGE. После MERGE любые execute запрещены.
 
 Если любой шаг завершается с ошибкой — процесс считается неуспешным.
 
@@ -251,66 +257,72 @@ PASS_2 — строгое исполнение зафиксированной а
 
 ---
 
-## Lifecycle состояния и snapshot (канонический)
+## Lifecycle (канонический, enforced)
 
-Проект работает как конечный автомат: состояния фиксированы, переходы однозначны.
-
-### Lifecycle snapshot (каноническая цепочка)
+Lifecycle проекта является **конечным автоматом**.  
+Переходы между состояниями жёстко зафиксированы и проверяются кодом.
+Никакие шаги не могут быть выполнены «повторно» или «обходным путём».
 
 Диаграмма состояний (каноническая):
 ```
-[DECIDE / PASS_1]
-|
-| emits
-v
-[snapshot.json] -----> [sha256]
-| |
-| | identifies immutable_architecture (immutable_fingerprint + prompts fingerprints)
-v v
-[approve] (POINT OF NO RETURN)
-|
-| unlocks
-v
-[execute / PASS_2A CORE]
-|
-| then
-v
-[execute / PASS_2B ANCHORS]
-|
-| then (external, deterministic)
-v
-[MERGE]
-|
-| only then
-v
-[post-check]
+DECIDE
+↓
+SNAPSHOT (canonical + sha256)
+↓
+APPROVE ← POINT OF NO RETURN
+↓
+EXECUTE / PASS_2A (CORE)
+↓
+EXECUTE / PASS_2B (ANCHORS)
+↓
+MERGE
+↓
+POST-CHECK
 
 ```
 
-DECIDE
-→ snapshot.json
-→ sha256
-→ approve
-→ EXECUTE CORE
-→ EXECUTE ANCHORS
-→ MERGE
-→ post-check
+
+### Описание состояний и ограничений
+
+| Состояние | Source of truth | Разрешено | Запрещено |
+|----------|----------------|-----------|-----------|
+| DECIDE | LLM output | Формирование ARCH_DECISION_JSON | Генерация контента |
+| SNAPSHOT | `state/snapshots/*.snapshot.json` | Проверка, хеширование | Любые изменения архитектуры |
+| APPROVE | `approvals/<hash>.approved` | EXECUTE | Повторный DECIDE |
+| EXECUTE (CORE / ANCHORS) | `outputs/pass_2/<run_id>/` | Генерация артефактов | Изменение snapshot |
+| MERGE | `state/merges/<merge_id>.json` | POST-CHECK | Любой EXECUTE |
+| POST-CHECK | merge-state | Валидация deliverables | Генерация артефактов |
+
+### Ключевые инварианты
+
+- После **APPROVE** архитектура immutable.
+- После **MERGE** любые попытки `EXECUTE` **обязаны завершаться ошибкой**.
+- MERGE является **единственной точкой входа** для post-check.
+- После MERGE источником истины считается **только** `state/merges/<merge_id>.json`.
+- LLM никогда не участвует в MERGE и post-check.
+
+Нарушение любого из этих правил считается **ошибкой lifecycle**, а не допустимым сценарием.
 
 Запреты (не обсуждаются):
 - post-check запрещён до MERGE (post-check выполняется только по merge_id).
 - EXECUTE (CORE/ANCHORS) запрещён после MERGE для данного snapshot и данного merge_id, включая попытки запуска с флагом `--force`.
 - MERGE запрещён, если immutable_fingerprint (и prompts fingerprints) не совпадают между snapshot и текущим окружением.
 
-Где:
-- **DECIDE** — PASS_1 принимает архитектурные решения и формирует snapshot-кандидат.
-- **snapshot.json** — файл архитектурного решения (вместе с fingerprints prompts и ссылкой на входные данные).
-- **sha256** — детерминированный hash immutable-части snapshot (архитектура + fingerprints prompts).
-- **approve** — человеческая точка ответственности: создаётся approval-файл для hash (POINT OF NO RETURN).
-- **EXECUTE CORE** — PASS_2A исполняет per-node deliverables строго по approved snapshot.
-- **EXECUTE ANCHORS** — PASS_2B исполняет link-level deliverables строго по тому же approved snapshot.
-- **MERGE** — внешний детерминированный шаг (Python), объединяет CORE + ANCHORS и валидирует совпадение immutable_fingerprint.
-- **post-check** — разрешён только для merge_id, до MERGE запрещён.
+> Примечание: определения состояний см. в таблице «Описание состояний и ограничений» выше.
 
+### Соответствие CLI-команд состояниям lifecycle
+
+| Команда | Допустимое состояние | Проверяется | Поведение при нарушении |
+|-------|---------------------|-------------|--------------------------|
+| `orchestrator decide` | DECIDE | — | FAIL |
+| `orchestrator execute --stage core` | APPROVE | approve + snapshot immutability | FAIL |
+| `orchestrator execute --stage anchors` | APPROVE | approve + snapshot immutability | FAIL |
+| `merge_pass2.py` | EXECUTE (CORE + ANCHORS завершены) | immutable_fingerprint | FAIL |
+| `check_deliverables.py <merge_id>` | MERGE | merge-state | FAIL |
+| Любой `execute` после MERGE | ❌ запрещено | merge-state | FAIL (STOP-condition) |
+
+Команды, вызванные вне допустимого состояния lifecycle,  
+**обязаны завершаться ошибкой**, а не выполнять частичное действие.
 
 ### Точка невозврата
 
@@ -392,7 +404,6 @@ LLM **не имеет права**:
 
 Любая логика, основанная на «памяти» или «контексте диалога», считается недействительной.
 
-
 ## Общая архитектура workflow
 
 Workflow состоит из **двух жёстко разделённых проходов**:
@@ -400,25 +411,11 @@ Workflow состоит из **двух жёстко разделённых пр
 - **PASS_1 — DECIDE**: принятие архитектурных решений
 - **PASS_2 — EXECUTE**: исполнение строго по зафиксированной архитектуре
 
-Между ними находятся обязательные контрольные точки:
-
-```
-DECIDE
-↓
-SNAPSHOT + HASH
-↓
-APPROVE (human)
-↓
-EXECUTE CORE
-↓
-EXECUTE ANCHORS
-↓
-MERGE (external, deterministic)
-↓
-POST-CHECK (deliverables, merge_id only)
-```
+Полная последовательность состояний и запреты зафиксированы в разделе  
+**Lifecycle (канонический, enforced)**.
 
 Каждый шаг либо проходит валидацию, либо останавливает процесс.
+
 
 ---
 
@@ -726,7 +723,7 @@ outputs/pass_2/<snapshot_id>/
 │ ├── execution_result.json
 │ └── execution_result.raw.txt
 │
-└── (merge step produces outputs in outputs/pass_2/<merge_id>/)
+└── (MERGE фиксируется в state/merges/<merge_id>.json; post-check выполняется по merge_id)
 
 Post-check выполняется **только после merge core + anchors**.
 
@@ -734,8 +731,8 @@ Merge:
 - выполняется **внешним кодом (Python)**,
 - не является задачей LLM,
 - не допускает интерпретации или пересборки данных,
-- представляет собой детерминированное объединение
-  `core/*` и `anchors/*` в единый `execution_result.json`.
+- фиксирует результат объединения стадий как merge-state в `state/merges/<merge_id>.json`
+  (post-check использует merge-state как источник истины).
 
 ---
 
@@ -791,7 +788,7 @@ Merge:
 
 ## Post‑check deliverables (обязательный гейт)
 
-После успешного MERGE (core + anchors) должен быть запущен post-check:
+После успешного MERGE (core + anchors) должен быть запущен post-check (он читает пути артефактов из merge-state, а не «угадывает» их по outputs):
 
 ```
 scripts/check_deliverables.py <merge_id>
@@ -901,9 +898,28 @@ python -m scripts.orchestrator execute --stage core --snapshot state/snapshots/<
 # PASS_2B — ANCHORS (link-level артефакты)
 python -m scripts.orchestrator execute --stage anchors --snapshot state/snapshots/<snapshot_id>.snapshot.json
 
-# выполнить MERGE (core + anchors) во внешнем коде → получить <merge_id>
+# MERGE — обязательный шаг (external, deterministic)
+python -m scripts.merge_pass2 \
+  --core-snapshot-id <snapshot_id> \
+  --anchors-snapshot-id <snapshot_id>
+
+# MERGE создаёт lifecycle-состояние:
+# - state/merges/<merge_id>.json
+# - state/merges/by_run/<task_id>__<hashprefix>.merge_id
+#
+# <merge_id> = <task_id>__<hashprefix>
+# где:
+# - task_id берётся из input/task.json и snapshot
+# - hashprefix = первые 12 символов sha256 snapshot
+
+⚠️ ВАЖНО:
+- post-check ЗАПРЕЩЁН для snapshot_id
+- post-check РАЗРЕШЁН ТОЛЬКО для merge_id
+- merge-state является единственным источником истины после MERGE
+
 # post-check разрешён ТОЛЬКО для merge_id
 python scripts/check_deliverables.py <merge_id>
+
 ```
 
 Если любой шаг падает — процесс считается неуспешным.
@@ -1050,20 +1066,16 @@ MERGE — отдельный обязательный шаг между PASS_2 �
 - anchors_snapshot_id — snapshot PASS_2B / ANCHORS
 
 Выход:
-- новый merge_id в outputs/pass_2/<merge_id>/
-- execution_result.json
-- материализованные артефакты:
-  semantic_enrichment.json
-  keywords.json
-  patient_questions.json
-  anchors.json
+- `merge_id` (детерминированный идентификатор merge)
+- merge-state:
+  - `state/merges/<merge_id>.json`
+  - `state/merges/by_run/<task_id>__<hashprefix>.merge_id`
 
 MERGE выполняется:
 - только внешним Python-кодом
 - без участия LLM
 - без изменения содержимого артефактов
-- fail-fast: если `outputs/pass_2/<merge_id>/` уже существует и **не пустой** — MERGE завершается с FAIL (перезапись запрещена; новый результат = новый merge_id)
-
+- fail-fast: если `state/merges/<merge_id>.json` уже существует — MERGE завершается с FAIL (перезапись запрещена)
 
 Post-check:
 - ЗАПРЕЩЕНО выполнять post-check для CORE или ANCHORS snapshot
@@ -1106,16 +1118,16 @@ MERGE выполняет обязательную проверку совмес�
 При нарушении любого условия PASS_2 **НЕ запускается**
 (ни CORE, ни ANCHORS). Процесс завершается с ненулевым exit code.
 
-## Merge State Contract (authoritative)
+## Контракт merge-state (authoritative)
 
 MERGE является детерминированным внешним шагом и фиксируется как состояние в `state/`.
 
-### Authoritative merge state
-- `state/merges/<merge_id>.json` — canonical record MERGE.
+### Каноническое merge-state
+- `state/merges/<merge_id>.json` — каноническая запись MERGE.
 - `state/merges/by_run/<task_id>__<hashprefix>.merge_id` — pointer для конкретного run.
 
 MERGE считается выполненным только при наличии обоих файлов.
 
-### Invariants
-- `immutable_fingerprint` в `state/merges/<merge_id>.json` MUST equal computed fingerprint for the approved snapshot.
-- После появления merge-state любые попытки `execute --stage core|anchors` MUST FAIL (даже при `--force`).
+### Инварианты
+- `immutable_fingerprint` в `state/merges/<merge_id>.json` обязан совпадать с вычисленным fingerprint для approved snapshot.
+- После появления merge-state любые попытки `execute --stage core|anchors` обязаны завершаться ошибкой (включая запуск с `--force`).
