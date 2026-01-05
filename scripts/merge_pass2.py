@@ -33,6 +33,12 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, merge_id: str, output
     anchors_base = pass2_dir / anchors_snapshot_id
     out_base = pass2_dir / merge_id
 
+    # --- FAIL-FAST: MERGE OUTPUT MUST NOT EXIST ---
+    if out_base.exists() and any(out_base.iterdir()):
+        raise SystemExit(
+            f"[MERGE] FAIL: merge output already exists and is not empty: {out_base}"
+        )
+
     _require_dir(pass2_dir, "outputs/pass_2")
     _require_dir(core_base, "CORE snapshot")
     _require_dir(anchors_base, "ANCHORS snapshot")

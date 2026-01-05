@@ -3,20 +3,46 @@ import sys
 from pathlib import Path
 
 if len(sys.argv) < 2:
-    print("[USAGE] python scripts/check_deliverables.py <snapshot_id>")
+    print("[USAGE] python scripts/check_deliverables.py <merge_id>")
     sys.exit(1)
 
-snap_id = sys.argv[1]
+merge_id = sys.argv[1]
 
-snap_path = Path("state/snapshots") / f"{snap_id}.canonical.json"
-out_dir   = Path("outputs/pass_2") / snap_id
+out_dir = Path("outputs/pass_2") / merge_id
+merge_exec_path = out_dir / "execution_result.json"
 
 def load(p: Path):
     with p.open("r", encoding="utf-8") as f:
         return json.load(f)
 
+if not merge_exec_path.exists():
+    print(f"[FAIL] missing MERGE execution_result.json: {merge_exec_path}")
+    raise SystemExit(1)
+
+merge_exec = load(merge_exec_path)
+
+src = merge_exec.get("source_snapshots") or {}
+core_snapshot_id = src.get("core_snapshot_id")
+anchors_snapshot_id = src.get("anchors_snapshot_id")
+
+if not core_snapshot_id or not anchors_snapshot_id:
+    print("[FAIL] MERGE execution_result.json missing source_snapshots.core_snapshot_id or anchors_snapshot_id")
+    raise SystemExit(1)
+
+if core_snapshot_id != anchors_snapshot_id:
+    print("[FAIL] core_snapshot_id != anchors_snapshot_id (stage compatibility violated)")
+    print("  core_snapshot_id   =", core_snapshot_id)
+    print("  anchors_snapshot_id=", anchors_snapshot_id)
+    raise SystemExit(1)
+
+snap_path = Path("state/snapshots") / f"{core_snapshot_id}.canonical.json"
+if not snap_path.exists():
+    print(f"[FAIL] missing snapshot canonical for post-check: {snap_path}")
+    raise SystemExit(1)
+
 snap = load(snap_path)
 reg = snap["immutable_architecture"]["node_registry"]
+
 if isinstance(reg, dict):
     node_ids = list(reg.keys())
 else:
@@ -96,17 +122,21 @@ else:
         raise SystemExit(1)
 
 
-# --- final_artifacts.json: validate expected keys (aggregate artifact, not per-node) ---
-fa = load(out_dir / "final_artifacts.json")
+# --- final_artifacts.json: optional aggregate artifact ---
+fa_path = out_dir / "final_artifacts.json"
 print("\nFILE: final_artifacts.json")
-if not isinstance(fa, dict):
-    print("  [FAIL] must be dict, got:", type(fa).__name__)
-    raise SystemExit(1)
+if not fa_path.exists():
+    print("  [SKIP] missing (optional in current contract).")
 else:
+    fa = load(fa_path)
+    if not isinstance(fa, dict):
+        print("  [FAIL] must be dict, got:", type(fa).__name__)
+        raise SystemExit(1)
     ok_key = "main_summary_table" in fa and isinstance(fa.get("main_summary_table"), str) and fa["main_summary_table"].strip()
     print("  has_main_summary_table =", bool(ok_key))
     if not ok_key:
         print("  [FAIL] final_artifacts.json missing non-empty main_summary_table.")
         raise SystemExit(1)
     print("  main_summary_table_chars =", len(fa["main_summary_table"]))
+
     

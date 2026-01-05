@@ -15,6 +15,7 @@ import argparse
 import json
 import sys
 import subprocess
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -147,7 +148,7 @@ def cmd_decide() -> None:
     # 2) собрать запрос
     request_text = build_pass_1_request(task, schema, pass_1_prompt)
 
-    # 3) вызвать LLM (пока заглушка)
+    # 3) вызвать LLM
     llm_text = run_llm(request_text)
 
     # 4) сохранить сырой ответ (на случай разборок)
@@ -292,7 +293,7 @@ def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str, st
 
     return arch_decision, hash_hex, immutable_fp
 
-def cmd_execute(snapshot_path: str, stage: str) -> None:
+def cmd_execute(snapshot_path: str, stage: str, force: bool = False) -> None:
     """
     PASS_2 выполняется ТОЛЬКО если PRE-FLIGHT gate пройден (до любого вызова LLM).
     """
@@ -338,16 +339,27 @@ def cmd_execute(snapshot_path: str, stage: str) -> None:
         + "\n"
     )
 
-    llm_text = run_llm(request_text)
-
-    # 1) сохранить сырой ответ
+    # 1) подготовить выходную директорию (и запретить перезапись без явного --force)
     out_dir = OUTPUTS_DIR / "pass_2" / f"{task.get('task_id','task')}__{hash_hex[:12]}" / stage
+
+    if out_dir.exists() and any(out_dir.iterdir()):
+        if not force:
+            raise FileExistsError(
+                f"OUTPUT_DIR_EXISTS: {out_dir} (refusing to overwrite; re-run with --force to wipe and overwrite)"
+            )
+        # --force: wipe stage dir to avoid mixing old/new artifacts
+        shutil.rmtree(out_dir)
+
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    llm_text = run_llm(request_text)
+
+    # 2) сохранить сырой ответ
     raw_path = out_dir / "execution_result.raw.txt"
+
     write_text(raw_path, llm_text)
 
-    # 2) строго распарсить JSON (без текста до/после)
+    # 3) строго распарсить JSON (без текста до/после)
     exec_json = extract_json_strict(llm_text)
 
     # Оркестратор сам фиксирует отпечаток immutable (LLM не управляет этим)
@@ -359,11 +371,11 @@ def cmd_execute(snapshot_path: str, stage: str) -> None:
         raise ValueError("IMMUTABILITY_VIOLATION: deliverables содержит immutable_architecture")
 
 
-    # 3) сохранить нормальный JSON
+    # 4) сохранить нормальный JSON
     json_path = out_dir / "execution_result.json"
     write_json_pretty(json_path, exec_json)
 
-    # 4) разложить deliverables по отдельным файлам
+    # 5) разложить deliverables по отдельным файлам
     deliverables = exec_json.get("deliverables", {})
     if stage == "core":
         parts = {
@@ -405,6 +417,12 @@ def main(argv: list[str]) -> int:
         required=True,
         help="PASS_2 stage: core or anchors"
     )
+    p_execute.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing outputs for this stage (DANGEROUS; wipes stage dir first)"
+    )
+
 
     args = parser.parse_args(argv)
 
@@ -414,7 +432,7 @@ def main(argv: list[str]) -> int:
         elif args.cmd == "approve":
             cmd_approve(args.snapshot)
         elif args.cmd == "execute":
-            cmd_execute(args.snapshot, args.stage)
+            cmd_execute(args.snapshot, args.stage, args.force)
         else:
             raise ValueError(f"Unknown command: {args.cmd}")
         return 0
