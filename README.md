@@ -789,7 +789,7 @@ Merge:
 
 ## Post‑check deliverables (обязательный гейт)
 
-После успешного MERGE (core + anchors) должен быть запущен post-check (он читает пути артефактов из merge-state, а не «угадывает» их по outputs):
+После успешного MERGE (core + anchors) должен быть запущен post-check (он читает пути артефактов **только из merge-state**, а не «угадывает» их по outputs):
 
 ```bash
 scripts/check_deliverables.py <merge_id>
