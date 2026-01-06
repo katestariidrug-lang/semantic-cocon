@@ -18,6 +18,7 @@ LEVEL_FAIL = "FAIL"
 LEVEL_BLOCKER = "BLOCKER"
 
 ERROR_CODES = {
+    "POST_CHECK_OK",
     "DELIVERABLES_CHECK_FAILED",
     "LIFECYCLE_VIOLATION",
     "MERGE_STATE_MISSING",
@@ -160,9 +161,30 @@ def main() -> int:
 
     merge_state: Dict[str, Any] = merge_state_raw
 
-    # Snapshot canonical addressed by merge_id (= run_id = <task_id>__<hashprefix>)
-    snap_path = Path("state/snapshots") / f"{merge_id}.canonical.json"
+    # Snapshot canonical is resolved ONLY via merge-state (authoritative after MERGE)
+    sc = merge_state.get("snapshot_canonical")
+    if not isinstance(sc, dict):
+        r.blocker(
+            "MERGE_STATE_INVALID",
+            "merge-state missing snapshot_canonical object",
+            evidence={"merge_id": merge_id, "path": str(merge_state_path)},
+        )
+        r.emit()
+        return r.exit_code()
+
+    sc_path = (sc.get("path") or "").strip()
+    if not sc_path:
+        r.blocker(
+            "MERGE_STATE_INVALID",
+            "merge-state snapshot_canonical.path is missing/empty",
+            evidence={"merge_id": merge_id, "path": str(merge_state_path), "snapshot_canonical": sc},
+        )
+        r.emit()
+        return r.exit_code()
+
+    snap_path = Path(sc_path)
     snap_raw, err = load_json(snap_path)
+
     if snap_raw is None:
         r.blocker(
             "SNAPSHOT_CANONICAL_MISSING",
@@ -360,7 +382,7 @@ def main() -> int:
             r.emit()
             return r.exit_code()
 
-    r.pass_("DELIVERABLES_CHECK_FAILED", f"deliverables OK for merge_id={merge_id}")
+    r.pass_("POST_CHECK_OK", f"deliverables OK for merge_id={merge_id}")
     r.emit()
     return r.exit_code()
 

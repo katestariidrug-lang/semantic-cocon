@@ -1,14 +1,3 @@
-"""
-ФАЙЛ: scripts/orchestrator.py
-НАЗНАЧЕНИЕ: Оркестратор двухпроходного workflow:
-  - decide  : запуск PASS_1 → получить ARCH_DECISION_JSON → сохранить snapshot+hash
-  - approve : человеческое подтверждение конкретного snapshot-hash
-  - execute : запуск PASS_2 только если snapshot верифицирован и подтверждён
-
-ИСПОЛЬЗУЕТСЯ: VS Code tasks / CLI.
-ДОСТУП LLM: запрещён (LLM не управляет state, не проверяет immutability).
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -28,6 +17,39 @@ from scripts.state_utils import (
 )
 
 from scripts.lifecycle import LifecycleViolation
+
+# -------------------------
+# Unified CLI contract (orchestrator)
+# -------------------------
+EXIT_PASS = 0
+EXIT_FAIL = 1
+EXIT_BLOCKER = 2
+
+LEVEL_PASS = "PASS"
+LEVEL_FAIL = "FAIL"
+LEVEL_BLOCKER = "BLOCKER"
+
+ERROR_CODES = {
+    "DECIDE_OK",
+    "APPROVE_OK",
+    "EXECUTE_OK",
+    "LIFECYCLE_VIOLATION",
+    "ORCHESTRATOR_FAILED",
+}
+
+def emit(level: str, code: str, message: str, evidence: dict | None = None) -> None:
+    if code not in ERROR_CODES:
+        # неизвестный код = нарушение контракта => BLOCKER, но exit решает main()
+        print(f"[{LEVEL_BLOCKER}] ORCHESTRATOR_FAILED: unknown error code used")
+        payload = {"bad_code": code}
+        if evidence is not None:
+            payload.update(evidence)
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        return
+
+    print(f"[{level}] {code}: {message}")
+    if evidence is not None:
+        print(json.dumps(evidence, ensure_ascii=False, sort_keys=True))
 
 ROOT = Path(__file__).resolve().parents[1]  # project-root/
 PROMPTS_DIR = ROOT / "prompts"
@@ -186,11 +208,18 @@ def cmd_decide() -> None:
         task_id=task_id,
     )
 
-    # 11) вывести пути (для человека и для VS Code логов)
-    print("DECIDE_OK")
-    print(f"SNAPSHOT:  {paths.snapshot_path}")
-    print(f"CANONICAL: {paths.canonical_path}")
-    print(f"HASH:      {paths.hash_path}")
+    # 11) вывести результат строго по контракту
+    emit(
+        LEVEL_PASS,
+        "DECIDE_OK",
+        "snapshot created (snapshot/canonical/hash written)",
+        evidence={
+            "snapshot": str(paths.snapshot_path),
+            "canonical": str(paths.canonical_path),
+            "hash_file": str(paths.hash_path),
+        },
+    )
+
 
 
 def approval_file_for_hash(hash_hex: str) -> Path:
@@ -220,14 +249,23 @@ def cmd_approve(snapshot_id: str) -> None:
 
     # идемпотентность: если уже есть — не падаем
     if approval_path.exists():
-        print("APPROVE_OK")
-        print(f"APPROVAL: {approval_path}")
+        emit(
+            LEVEL_PASS,
+            "APPROVE_OK",
+            "approval already exists (idempotent)",
+            evidence={"approval": str(approval_path)},
+        )
         return
 
     approval_path.write_text("approved\n", encoding="utf-8")
 
-    print("APPROVE_OK")
-    print(f"APPROVAL: {approval_path}")
+    emit(
+        LEVEL_PASS,
+        "APPROVE_OK",
+        "approval created",
+        evidence={"approval": str(approval_path)},
+    )
+
 
 def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str, str]:
     """
@@ -410,7 +448,13 @@ def cmd_execute(snapshot_path: str, stage: str, force: bool = False) -> None:
     # NOTE: Post-check is executed after CORE+ANCHORS merge (next step).
     # Running it per-stage would fail by design (missing stage-specific deliverables).
     
-    print("EXECUTE_OK")
+    emit(
+        LEVEL_PASS,
+        "EXECUTE_OK",
+        "stage executed; artifacts written",
+        evidence={"stage": stage, "out_dir": str(out_dir)},
+    )
+
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="orchestrator", description="Two-pass LLM workflow orchestrator")
@@ -447,13 +491,14 @@ def main(argv: list[str]) -> int:
             cmd_execute(args.snapshot, args.stage, args.force)
         else:
             raise ValueError(f"Unknown command: {args.cmd}")
-        return 0
+        return EXIT_PASS
     except LifecycleViolation as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        return 2
+        emit(LEVEL_BLOCKER, "LIFECYCLE_VIOLATION", str(e))
+        return EXIT_BLOCKER
     except Exception as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        return 1
+        emit(LEVEL_FAIL, "ORCHESTRATOR_FAILED", str(e))
+        return EXIT_FAIL
+
 
 
 

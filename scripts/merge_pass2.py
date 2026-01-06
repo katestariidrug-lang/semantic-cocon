@@ -1,15 +1,55 @@
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
+
+# -------------------------
+# Unified CLI contract (merge_pass2)
+# -------------------------
+EXIT_PASS = 0
+EXIT_FAIL = 1
+EXIT_BLOCKER = 2
+
+LEVEL_PASS = "PASS"
+LEVEL_FAIL = "FAIL"
+LEVEL_BLOCKER = "BLOCKER"
+
+ERROR_CODES = {
+    "MERGE_OK",
+    "INPUT_MISSING",
+    "INVALID_SNAPSHOT_ID_FORMAT",
+    "RUN_MISMATCH",
+    "IMMUTABLE_FINGERPRINT_MISSING",
+    "IMMUTABLE_FINGERPRINT_MISMATCH",
+    "MERGE_STATE_ALREADY_EXISTS",
+    "MERGE_POINTER_ALREADY_EXISTS",
+    "MERGE_FAILED",
+}
+
+def emit(level: str, code: str, message: str, evidence: Optional[dict] = None) -> None:
+    if code not in ERROR_CODES:
+        # неизвестный код = нарушение контракта => BLOCKER, но формат строки не ломаем
+        print(f"[{LEVEL_BLOCKER}] MERGE_FAILED: unknown error code used")
+        payload = {"bad_code": code}
+        if evidence is not None:
+            payload.update(evidence)
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        raise SystemExit(EXIT_BLOCKER)
+
+    print(f"[{level}] {code}: {message}")
+    if evidence is not None:
+        print(json.dumps(evidence, ensure_ascii=False, sort_keys=True))
 
 class MergeContractViolation(RuntimeError):
     """
     Нарушение контракта MERGE (инварианты, повторный merge, fingerprint mismatch).
-    Должно приводить к exit code 2.
+    Должно приводить к exit code 2 (BLOCKER).
     """
-    pass
+    def __init__(self, code: str, message: str, evidence: Optional[dict] = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.evidence = evidence or {}
 
 ROOT = Path(__file__).resolve().parents[1]  # project-root/
 STATE_DIR = ROOT / "state"
@@ -26,16 +66,26 @@ def _write_json(path: Path, data: Any) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
         f.write("\n")
 
-
 def _require_dir(path: Path, name: str) -> None:
     if not path.exists() or not path.is_dir():
-        raise SystemExit(f"[MERGE] FAIL: missing {name} dir: {path}")
+        emit(
+            LEVEL_FAIL,
+            "INPUT_MISSING",
+            f"missing required directory: {name}",
+            evidence={"path": str(path)},
+        )
+        raise SystemExit(EXIT_FAIL)
 
 
 def _require_file(path: Path, name: str) -> None:
     if not path.exists() or not path.is_file():
-        raise SystemExit(f"[MERGE] FAIL: missing {name} file: {path}")
-
+        emit(
+            LEVEL_FAIL,
+            "INPUT_MISSING",
+            f"missing required file: {name}",
+            evidence={"path": str(path)},
+        )
+        raise SystemExit(EXIT_FAIL)
 
 def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) -> None:
     outputs_dir = (ROOT / outputs_dir) if not outputs_dir.is_absolute() else outputs_dir
@@ -51,22 +101,34 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
 
     # run_id orchestrator: <task_id>__<hashprefix>, hashprefix = sha256(snapshot)[:12]
     if "__" not in core_snapshot_id:
-        raise SystemExit(
-            f"[MERGE] FAIL: invalid core_snapshot_id format (expected <task_id>__<hashprefix>): {core_snapshot_id}"
+        emit(
+            LEVEL_FAIL,
+            "INVALID_SNAPSHOT_ID_FORMAT",
+            "invalid core_snapshot_id format (expected <task_id>__<hashprefix>)",
+            evidence={"core_snapshot_id": core_snapshot_id},
         )
+        raise SystemExit(EXIT_FAIL)
+
     if "__" not in anchors_snapshot_id:
-        raise SystemExit(
-            f"[MERGE] FAIL: invalid anchors_snapshot_id format (expected <task_id>__<hashprefix>): {anchors_snapshot_id}"
+        emit(
+            LEVEL_FAIL,
+            "INVALID_SNAPSHOT_ID_FORMAT",
+            "invalid anchors_snapshot_id format (expected <task_id>__<hashprefix>)",
+            evidence={"anchors_snapshot_id": anchors_snapshot_id},
         )
+        raise SystemExit(EXIT_FAIL)
 
     core_task_id, core_hashprefix = core_snapshot_id.split("__", 1)
     anch_task_id, anch_hashprefix = anchors_snapshot_id.split("__", 1)
 
     if (core_task_id, core_hashprefix) != (anch_task_id, anch_hashprefix):
-        raise SystemExit(
-            "[MERGE] FAIL: CORE and ANCHORS belong to different runs "
-            f"(CORE={core_snapshot_id}, ANCHORS={anchors_snapshot_id})"
+        emit(
+            LEVEL_FAIL,
+            "RUN_MISMATCH",
+            "CORE and ANCHORS belong to different runs",
+            evidence={"core_snapshot_id": core_snapshot_id, "anchors_snapshot_id": anchors_snapshot_id},
         )
+        raise SystemExit(EXIT_FAIL)
 
     task_id = core_task_id
     hashprefix = core_hashprefix
@@ -81,11 +143,15 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
     # FAIL-FAST: не перезаписываем merge-state (иначе теряется точка невозврата)
     if merge_state_path.exists():
         raise MergeContractViolation(
-            f"MERGE_STATE_ALREADY_EXISTS: {merge_state_path}"
+            "MERGE_STATE_ALREADY_EXISTS",
+            "merge-state already exists (refusing to overwrite; MERGE is terminal)",
+            evidence={"path": str(merge_state_path)},
         )
     if merge_ptr_path.exists():
         raise MergeContractViolation(
-            f"MERGE_POINTER_ALREADY_EXISTS: {merge_ptr_path}"
+            "MERGE_POINTER_ALREADY_EXISTS",
+            "merge pointer already exists (refusing to overwrite; MERGE is terminal)",
+            evidence={"path": str(merge_ptr_path)},
         )
 
     core_dir = core_base / "core"
@@ -112,14 +178,21 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
     anchors_fp = anchors_exec.get("immutable_fingerprint")
 
     if not core_fp or not anchors_fp:
-        raise SystemExit(
-            "[MERGE] FAIL: immutable_fingerprint missing in CORE or ANCHORS execution_result"
+        emit(
+            LEVEL_FAIL,
+            "IMMUTABLE_FINGERPRINT_MISSING",
+            "immutable_fingerprint missing in CORE or ANCHORS execution_result",
+            evidence={"core_fp": core_fp, "anchors_fp": anchors_fp},
         )
+        raise SystemExit(EXIT_FAIL)
 
     if core_fp != anchors_fp:
         raise MergeContractViolation(
-            f"IMMUTABLE_FINGERPRINT_MISMATCH: CORE={core_fp}, ANCHORS={anchors_fp}"
+            "IMMUTABLE_FINGERPRINT_MISMATCH",
+            "immutable_fingerprint mismatch between CORE and ANCHORS",
+            evidence={"core_fp": core_fp, "anchors_fp": anchors_fp},
         )
+
 
     # --- READ CORE / ANCHORS DELIVERABLES (для sanity, без переупаковки в outputs) ---
     semantic_enrichment = _read_json(core_sem)
@@ -134,8 +207,12 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
         "hashprefix": hashprefix,
         "immutable_fingerprint": core_fp,
         "source_runs": {
-            "core_snapshot_id": core_snapshot_id,
             "anchors_snapshot_id": anchors_snapshot_id,
+            "core_snapshot_id": core_snapshot_id,
+        },
+        "snapshot_canonical": {
+            "id": core_snapshot_id,
+            "path": str(Path("state/snapshots") / f"{core_snapshot_id}.canonical.json"),
         },
         # где лежат артефакты (post-check будет читать отсюда)
         "artifacts": {
@@ -163,14 +240,21 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
     merge_ptr_path.parent.mkdir(parents=True, exist_ok=True)
     merge_ptr_path.write_text(merge_id + "\n", encoding="utf-8")
 
-    print("[MERGE] PASS")
-    print(f"[MERGE] core_snapshot_id = {core_snapshot_id}")
-    print(f"[MERGE] anchors_snapshot_id = {anchors_snapshot_id}")
-    print(f"[MERGE] merge_id = {merge_id}")
-    print(f"[MERGE] merge_state = {merge_state_path}")
-    print(f"[MERGE] merge_ptr = {merge_ptr_path}")
+    emit(
+        LEVEL_PASS,
+        "MERGE_OK",
+        "merge completed; merge-state and pointer created",
+        evidence={
+            "core_snapshot_id": core_snapshot_id,
+            "anchors_snapshot_id": anchors_snapshot_id,
+            "merge_id": merge_id,
+            "merge_state": str(merge_state_path),
+            "merge_ptr": str(merge_ptr_path),
+        },
+    )
 
-def main() -> None:
+
+def main() -> int:
     p = argparse.ArgumentParser(
         description="Deterministic MERGE of PASS_2A (CORE snapshot) + PASS_2B (ANCHORS snapshot). LLM must not be involved."
     )
@@ -184,16 +268,16 @@ def main() -> None:
         anchors_snapshot_id=args.anchors_snapshot_id,
         outputs_dir=Path(args.outputs_dir),
     )
+    return EXIT_PASS
 
 if __name__ == "__main__":
     try:
-        main()
+        raise SystemExit(main())
     except MergeContractViolation as e:
-        print(f"[MERGE] VIOLATION: {e}")
-        raise SystemExit(2)
+        emit(LEVEL_BLOCKER, e.code, str(e), evidence=getattr(e, "evidence", None))
+        raise SystemExit(EXIT_BLOCKER)
     except SystemExit:
-        # FAIL уже напечатан (missing files, bad input, etc.)
         raise
     except Exception as e:
-        print(f"[MERGE] ERROR: {e}")
-        raise SystemExit(1)
+        emit(LEVEL_FAIL, "MERGE_FAILED", f"unexpected runtime error: {e}")
+        raise SystemExit(EXIT_FAIL)
