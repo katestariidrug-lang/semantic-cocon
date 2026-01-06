@@ -3,6 +3,14 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
+
+class MergeContractViolation(RuntimeError):
+    """
+    Нарушение контракта MERGE (инварианты, повторный merge, fingerprint mismatch).
+    Должно приводить к exit code 2.
+    """
+    pass
+
 ROOT = Path(__file__).resolve().parents[1]  # project-root/
 STATE_DIR = ROOT / "state"
 
@@ -72,9 +80,13 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
 
     # FAIL-FAST: не перезаписываем merge-state (иначе теряется точка невозврата)
     if merge_state_path.exists():
-        raise SystemExit(f"[MERGE] FAIL: merge-state already exists: {merge_state_path}")
+        raise MergeContractViolation(
+            f"MERGE_STATE_ALREADY_EXISTS: {merge_state_path}"
+        )
     if merge_ptr_path.exists():
-        raise SystemExit(f"[MERGE] FAIL: merge pointer already exists: {merge_ptr_path}")
+        raise MergeContractViolation(
+            f"MERGE_POINTER_ALREADY_EXISTS: {merge_ptr_path}"
+        )
 
     core_dir = core_base / "core"
     anchors_dir = anchors_base / "anchors"
@@ -105,9 +117,8 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
         )
 
     if core_fp != anchors_fp:
-        raise SystemExit(
-            "[MERGE] FAIL: immutable_fingerprint mismatch "
-            f"(CORE={core_fp}, ANCHORS={anchors_fp})"
+        raise MergeContractViolation(
+            f"IMMUTABLE_FINGERPRINT_MISMATCH: CORE={core_fp}, ANCHORS={anchors_fp}"
         )
 
     # --- READ CORE / ANCHORS DELIVERABLES (для sanity, без переупаковки в outputs) ---
@@ -129,12 +140,12 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
         # где лежат артефакты (post-check будет читать отсюда)
         "artifacts": {
             "core": {
-                "semantic_enrichment_path": str(core_sem.as_posix()),
-                "keywords_path": str(core_kw.as_posix()),
-                "patient_questions_path": str(core_q.as_posix()),
+                "semantic_enrichment_path": str(core_sem.resolve().as_posix()),
+                "keywords_path": str(core_kw.resolve().as_posix()),
+                "patient_questions_path": str(core_q.resolve().as_posix()),
             },
             "anchors": {
-                "anchors_path": str(anchors_json.as_posix()),
+                "anchors_path": str(anchors_json.resolve().as_posix()),
             },
         },
         "merge_contract": {
@@ -175,4 +186,14 @@ def main() -> None:
     )
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except MergeContractViolation as e:
+        print(f"[MERGE] VIOLATION: {e}")
+        raise SystemExit(2)
+    except SystemExit:
+        # FAIL уже напечатан (missing files, bad input, etc.)
+        raise
+    except Exception as e:
+        print(f"[MERGE] ERROR: {e}")
+        raise SystemExit(1)

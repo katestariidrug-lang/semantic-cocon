@@ -17,7 +17,7 @@ import sys
 import subprocess
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 from scripts.state_utils import (
     save_snapshot,
@@ -26,6 +26,8 @@ from scripts.state_utils import (
     fingerprint_file,
     read_sha256_file,
 )
+
+from scripts.lifecycle import LifecycleViolation
 
 ROOT = Path(__file__).resolve().parents[1]  # project-root/
 PROMPTS_DIR = ROOT / "prompts"
@@ -263,9 +265,10 @@ def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str, st
 
     if merge_ptr.exists():
         merge_id = merge_ptr.read_text(encoding="utf-8").strip()
-        raise RuntimeError(
-            f"LIFECYCLE_VIOLATION: EXECUTE запрещён после MERGE (run уже смёржен: merge_id={merge_id})"
+        raise LifecycleViolation(
+            f"STOP_CONDITION: EXECUTE_FORBIDDEN_AFTER_MERGE (merge_id={merge_id})"
         )
+
 
     # README требует immutable_fingerprint как обязательный маркер snapshot-совместимости.
     # Если его нет — это BLOCKER до любого PASS_2.
@@ -445,9 +448,13 @@ def main(argv: list[str]) -> int:
         else:
             raise ValueError(f"Unknown command: {args.cmd}")
         return 0
+    except LifecycleViolation as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
+
 
 
 if __name__ == "__main__":

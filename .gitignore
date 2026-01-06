@@ -15,6 +15,7 @@ state/runtime/
 # state: keep schema, ignore run artifacts
 state/approvals/
 state/snapshots/
+state/merges/
 
 # local / working files
 to_do.md
