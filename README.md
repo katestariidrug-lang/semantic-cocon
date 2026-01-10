@@ -49,6 +49,13 @@ python -m scripts.orchestrator decide
 # (внутренняя техническая проверка snapshot выполняется orchestrator)
 # пользователь НЕ запускает gate_snapshot вручную
 
+# Diagnostic snapshot view (read-only) — опциональный шаг ПЕРЕД APPROVE:
+# упрощает ручную проверку структуры snapshot без интерпретации
+# и без влияния на архитектуру / pipeline.
+# Читает ТОЛЬКО canonical snapshot:
+#   state/snapshots/<snapshot_id>.canonical.json
+python scripts/view_snapshot.py <snapshot_id>
+
 # APPROVE — человеческий шаг (механизирован, но не автоматизирован)
 python -m scripts.orchestrator approve --snapshot <snapshot_id>
 
@@ -337,19 +344,14 @@ Lifecycle проекта является **конечным автоматом*
 Диаграмма состояний (каноническая):
 
 ```bash
-DECIDE
-↓
-SNAPSHOT (canonical + sha256)
-↓
-APPROVE ← POINT OF NO RETURN
-↓
-EXECUTE / PASS_2A (CORE)
-↓
-EXECUTE / PASS_2B (ANCHORS)
-↓
-MERGE
-↓
-POST-CHECK
+DECIDE  
+→ SNAPSHOT (canonical + sha256)  
+→ (опционально) Diagnostic snapshot view (read-only, перед APPROVE)  
+→ APPROVE (POINT OF NO RETURN)  
+→ EXECUTE / PASS_2A (CORE)  
+→ EXECUTE / PASS_2B (ANCHORS)  
+→ MERGE  
+→ POST-CHECK
 
 ```
 
@@ -358,7 +360,7 @@ POST-CHECK
 | Состояние | Source of truth | Разрешено | Запрещено |
 |----------|----------------|-----------|-----------|
 | DECIDE | LLM output | Формирование ARCH_DECISION_JSON | Генерация контента |
-| SNAPSHOT | `state/snapshots/*.snapshot.json` | Проверка, хеширование | Любые изменения архитектуры |
+| SNAPSHOT | `state/snapshots/*.snapshot.json` (+ `*.canonical.json`) | Проверка, хеширование | Любые изменения архитектуры |
 | APPROVE | `state/approvals/<hash>.approved` | EXECUTE | Изменение уже approved snapshot (разрешён только новый DECIDE → новый snapshot) |
 | EXECUTE (CORE / ANCHORS) | `outputs/pass_2/<run_id>/` | Генерация артефактов | Изменение snapshot |
 | MERGE | `state/merges/<merge_id>.json` | POST-CHECK | Любой EXECUTE |
@@ -716,6 +718,24 @@ state/approvals/<hash>.approved
 - момент, после которого snapshot считается immutable,
 - защита от самовольного исполнения,
 - жёсткое отделение «решения» от «исполнения».
+
+---
+
+## Diagnostic snapshot view (read-only)
+
+Назначение: упростить **ручную проверку snapshot перед approve**,
+не интерпретируя данные и не влияя на pipeline.
+
+Жёсткие ограничения (контракт):
+
+- читает **только** canonical snapshot: `state/snapshots/<snapshot_id>.canonical.json`
+- вывод — **чистая проекция структуры** (поля/дерево/секции), без интерпретации
+- **никакой агрегации**, “удобных” сводок, скорингов, рекомендаций и выводов
+- **не создаёт состояние**, не меняет файлы, не влияет на lifecycle
+- не заменяет APPROVE и не автоматизирует его
+
+Этот шаг является опциональным: он существует только как read-only инструмент
+для человека перед точкой невозврата (APPROVE).
 
 ---
 
@@ -1085,6 +1105,15 @@ LLM не может «протащить» некорректный резуль
   - Назначение: единая точка вызова LLM;
     в режиме `SMOKE_TEST=1` работает как детерминированный stub без внешнего провайдера.
 
+#### Read-only diagnostic tools (перед APPROVE)
+
+- `view_snapshot.py`
+  - **Lifecycle:** SNAPSHOT → (перед) APPROVE
+  - **Тип:** read-only диагностический helper
+  - **Назначение:** вывести “снимок структуры” canonical snapshot для ручной проверки;
+    читает только `state/snapshots/<snapshot_id>.canonical.json`;
+    не интерпретирует данные, не агрегирует и не создаёт состояние.
+
 #### Служебное
 
 - `__pycache__/` — Python bytecode cache (не часть контракта; должен игнорироваться Git).
@@ -1147,6 +1176,11 @@ python -m scripts.orchestrator approve --snapshot <snapshot_id>
 Для одного snapshot:
 
 ```bash
+# (опционально) Diagnostic snapshot view (read-only) — перед APPROVE:
+# читает только state/snapshots/<snapshot_id>.canonical.json,
+# выводит чистую структуру без интерпретации и без агрегации.
+python scripts/view_snapshot.py <snapshot_id>
+
 # (опционально) диагностический структурный гейт snapshot
 # обычно вызывается внутри orchestrator как часть PRE-FLIGHT
 python scripts/gate_snapshot.py <snapshot_id>
