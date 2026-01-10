@@ -8,6 +8,16 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict
 
+# Force UTF-8 output for Windows terminals/CI to avoid 'charmap' encode crashes.
+# This affects only console output, not file I/O.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    # If reconfigure is not available or stdout is redirected in a weird way, keep going.
+    pass
+
+
 from scripts.state_utils import (
     save_snapshot,
     verify_snapshot_files,
@@ -150,9 +160,17 @@ def run_llm(prompt_text: str) -> str:
     # Пока это "провод" без привязки к провайдеру.
     cmd = ["python", "-m", "scripts.llm_cli_bridge", "--in", str(REQ_PATH), "--out", str(RESP_PATH)]
 
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
     if proc.returncode != 0:
-        raise RuntimeError(f"LLM_CLI_FAILED: {proc.stderr.strip() or proc.stdout.strip()}")
+        err_text = ((proc.stderr or "").strip() or (proc.stdout or "").strip())
+        raise RuntimeError(f"LLM_CLI_FAILED: {err_text}")
 
     if not RESP_PATH.exists():
         raise FileNotFoundError(f"LLM_NO_RESPONSE_FILE: {RESP_PATH}")
@@ -443,7 +461,13 @@ def cmd_execute(snapshot_path: str, stage: str, force: bool = False) -> None:
 
     for key, filename in parts.items():
         part_path = out_dir / filename
-        write_json_pretty(part_path, deliverables.get(key, {}))
+
+        # Контракт типов по deliverables:
+        # - anchors.json MUST be a list
+        # - core deliverables are dicts keyed by node_id
+        default_obj: Any = [] if key == "anchors" else {}
+        write_json_pretty(part_path, deliverables.get(key, default_obj))
+
 
     # NOTE: Post-check is executed after CORE+ANCHORS merge (next step).
     # Running it per-stage would fail by design (missing stage-specific deliverables).

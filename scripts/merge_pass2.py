@@ -24,6 +24,8 @@ ERROR_CODES = {
     "IMMUTABLE_FINGERPRINT_MISMATCH",
     "MERGE_STATE_ALREADY_EXISTS",
     "MERGE_POINTER_ALREADY_EXISTS",
+    "INVALID_JSON",
+    "IO_ERROR",
     "MERGE_FAILED",
 }
 
@@ -56,9 +58,26 @@ STATE_DIR = ROOT / "state"
 
 
 def _read_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
+    # existence is enforced by _require_file before reading
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        emit(
+            LEVEL_FAIL,
+            "INVALID_JSON",
+            "invalid json",
+            evidence={"path": str(path), "error": str(e)},
+        )
+        raise SystemExit(EXIT_FAIL)
+    except OSError as e:
+        emit(
+            LEVEL_FAIL,
+            "IO_ERROR",
+            "io error while reading json",
+            evidence={"path": str(path), "error": str(e)},
+        )
+        raise SystemExit(EXIT_FAIL)
 
 def _write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -171,20 +190,43 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
     _require_file(anchors_json, "anchors/anchors.json")
 
     # --- ENFORCE SNAPSHOT COMPATIBILITY ---
-    core_exec = _read_json(core_base / "core" / "execution_result.json")
-    anchors_exec = _read_json(anchors_base / "anchors" / "execution_result.json")
+    core_exec_path = core_base / "core" / "execution_result.json"
+    anchors_exec_path = anchors_base / "anchors" / "execution_result.json"
+
+    _require_file(core_exec_path, "core/execution_result.json")
+    _require_file(anchors_exec_path, "anchors/execution_result.json")
+
+    core_exec = _read_json(core_exec_path)
+    anchors_exec = _read_json(anchors_exec_path)
+
+    if not isinstance(core_exec, dict):
+        emit(
+            LEVEL_FAIL,
+            "INVALID_JSON",
+            "core execution_result.json must be a JSON object",
+            evidence={"path": str(core_exec_path), "got_type": type(core_exec).__name__},
+        )
+        raise SystemExit(EXIT_FAIL)
+
+    if not isinstance(anchors_exec, dict):
+        emit(
+            LEVEL_FAIL,
+            "INVALID_JSON",
+            "anchors execution_result.json must be a JSON object",
+            evidence={"path": str(anchors_exec_path), "got_type": type(anchors_exec).__name__},
+        )
+        raise SystemExit(EXIT_FAIL)
 
     core_fp = core_exec.get("immutable_fingerprint")
     anchors_fp = anchors_exec.get("immutable_fingerprint")
 
     if not core_fp or not anchors_fp:
-        emit(
-            LEVEL_FAIL,
+        raise MergeContractViolation(
             "IMMUTABLE_FINGERPRINT_MISSING",
             "immutable_fingerprint missing in CORE or ANCHORS execution_result",
             evidence={"core_fp": core_fp, "anchors_fp": anchors_fp},
         )
-        raise SystemExit(EXIT_FAIL)
+
 
     if core_fp != anchors_fp:
         raise MergeContractViolation(
@@ -193,12 +235,9 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
             evidence={"core_fp": core_fp, "anchors_fp": anchors_fp},
         )
 
-
-    # --- READ CORE / ANCHORS DELIVERABLES (для sanity, без переупаковки в outputs) ---
-    semantic_enrichment = _read_json(core_sem)
-    keywords = _read_json(core_kw)
-    patient_questions = _read_json(core_q)
-    anchors = _read_json(anchors_json)
+    # --- DELIVERABLES PRESENCE VERIFIED ---
+    # Files are validated for presence only.
+    # Content is validated later by post-check via merge-state.
 
     # --- WRITE MERGE-STATE (authoritative) ---
     merge_state: Dict[str, Any] = {
