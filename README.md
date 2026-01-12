@@ -2,9 +2,34 @@
 
 ## Назначение проекта
 
-> Workflow для работы с LLM, где сначала принимаются архитектурные решения,
-> затем выполняется строго ограниченная генерация структурированных артефактов,
-> а результат можно проверить и воспроизвести.
+### Иерархия источников истины (обязательный контракт)
+
+В проекте **semantic-cocon** существует строгая иерархия документов:
+
+- **README.md — единственный источник архитектурной истины**
+  - lifecycle
+  - CLI-контракты
+  - инварианты
+  - запреты
+  - семантика состояний
+
+- **SYSTEM_CONTEXT.md — производный краткий контекст**
+  - предназначен для работы с ChatGPT
+  - не расширяет и не интерпретирует README
+  - не вводит новых правил или исключений
+
+### Обязательное правило
+
+Любое расхождение между README.md и SYSTEM_CONTEXT.md
+считается **архитектурным багом**.
+
+Исправление выполняется:
+1) через правку README.md (если меняется контракт),
+2) либо через синхронизацию SYSTEM_CONTEXT.md (если README не менялся).
+
+Обратный порядок **запрещён**.
+
+Workflow для работы с LLM, где сначала принимаются архитектурные решения, затем выполняется строго ограниченная генерация структурированных артефактов, а результат можно проверить и воспроизвести.
 
 ⚠️ ЖЁСТКОЕ ОГРАНИЧЕНИЕ PASS_2
 
@@ -347,7 +372,7 @@ Lifecycle проекта является **конечным автоматом*
 ```bash
 DECIDE  
 → SNAPSHOT (canonical + sha256)  
-→ (опционально) Diagnostic snapshot view (read-only, перед APPROVE)  
+→ (опционально) Diagnostic snapshot view (read-only helper, НЕ состояние lifecycle, перед APPROVE)  
 → APPROVE (POINT OF NO RETURN)  
 → EXECUTE / PASS_2A (CORE)  
 → EXECUTE / PASS_2B (ANCHORS)  
@@ -395,6 +420,7 @@ DECIDE
 | `python -m scripts.merge_pass2` | EXECUTE (CORE + ANCHORS завершены) | merge-state terminal + immutable_fingerprint | BLOCKER |
 | `python scripts/check_deliverables.py <merge_id>` | MERGE | merge-state | BLOCKER |
 | Любой `execute` после MERGE | ❌ запрещено | merge-state | BLOCKER (STOP-condition) |
+| `view_snapshot.py` | ❌ не является состоянием lifecycle | — | Никогда не используется как гейт |
 
 Команды, вызванные вне допустимого состояния lifecycle,  
 **обязаны завершаться ошибкой**, а не выполнять частичное действие.
@@ -734,7 +760,7 @@ state/approvals/<hash>.approved
 - **не создаёт состояние**, не влияет на lifecycle
 - не заменяет APPROVE
 
-### view_snapshot.py — публичный CLI-контракт (read-only, non-enforcing)
+### view_snapshot.py — публичный CLI-helper (read-only, non-enforcing)
 
 `view_snapshot.py` — диагностический helper для **ручного просмотра** структуры canonical snapshot.
 Это **НЕ гейт**, **НЕ проверка** и **НЕ часть lifecycle**.
@@ -759,7 +785,7 @@ python scripts/view_snapshot.py <snapshot_id>
 
 - `0` — успешный вывод
 - `1` — ошибка I/O или некорректный snapshot
-- `2` — ошибка CLI-вызова (argparse, вне контракта)
+- `2` — ошибка CLI-вызова (argparse, вне контракта; НЕ lifecycle BLOCKER)
 
 #### Явные запреты
 
