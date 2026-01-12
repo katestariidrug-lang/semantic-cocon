@@ -55,6 +55,7 @@ python -m scripts.orchestrator decide
 # Читает ТОЛЬКО canonical snapshot:
 #   state/snapshots/<snapshot_id>.canonical.json
 python scripts/view_snapshot.py <snapshot_id>
+# где <snapshot_id> = имя файла без суффикса .canonical.json
 
 # APPROVE — человеческий шаг (механизирован, но не автоматизирован)
 python -m scripts.orchestrator approve --snapshot <snapshot_id>
@@ -729,13 +730,46 @@ state/approvals/<hash>.approved
 Жёсткие ограничения (контракт):
 
 - читает **только** canonical snapshot: `state/snapshots/<snapshot_id>.canonical.json`
-- вывод — **чистая проекция структуры** (поля/дерево/секции), без интерпретации
-- **никакой агрегации**, “удобных” сводок, скорингов, рекомендаций и выводов
-- **не создаёт состояние**, не меняет файлы, не влияет на lifecycle
-- не заменяет APPROVE и не автоматизирует его
+- вывод — **чистая проекция структуры**, без интерпретации
+- **не создаёт состояние**, не влияет на lifecycle
+- не заменяет APPROVE
 
-Этот шаг является опциональным: он существует только как read-only инструмент
-для человека перед точкой невозврата (APPROVE).
+### view_snapshot.py — публичный CLI-контракт (read-only, non-enforcing)
+
+`view_snapshot.py` — диагностический helper для **ручного просмотра** структуры canonical snapshot.
+Это **НЕ гейт**, **НЕ проверка** и **НЕ часть lifecycle**.
+
+#### Допустимый вызов (единственный)
+
+```bash
+python scripts/view_snapshot.py <snapshot_id>
+```
+
+Других CLI-аргументов и флагов **не существует**.  
+Добавление режимов анализа, валидации, интерпретации, скоринга или
+«удобных» флагов **запрещено**.
+
+#### Формат вывода
+
+- **plain text**
+- без `PASS / FAIL / BLOCKER`
+- вывод **не является решением, оценкой или вердиктом**
+
+#### Exit codes
+
+- `0` — успешный вывод
+- `1` — ошибка I/O или некорректный snapshot
+- `2` — ошибка CLI-вызова (argparse, вне контракта)
+
+#### Явные запреты
+
+Запрещено использовать `view_snapshot.py`:
+
+- как гейт или проверку
+- в CI / pipeline
+- в PRE-FLIGHT
+- как сигнал approve / deny
+- как источник «решения / оценки / вердикта / валидности» snapshot
 
 ---
 
@@ -1180,10 +1214,10 @@ python -m scripts.orchestrator approve --snapshot <snapshot_id>
 # читает только state/snapshots/<snapshot_id>.canonical.json,
 # выводит чистую структуру без интерпретации и без агрегации.
 python scripts/view_snapshot.py <snapshot_id>
+# где <snapshot_id> = имя файла без суффикса .canonical.json
 
-# (опционально) диагностический структурный гейт snapshot
-# обычно вызывается внутри orchestrator как часть PRE-FLIGHT
-python scripts/gate_snapshot.py <snapshot_id>
+# (внутренний) структурный гейт snapshot выполняется orchestrator'ом как часть PRE-FLIGHT
+# пользователь НЕ запускает gate_snapshot вручную
 
 # APPROVE — человеческий шаг (механизирован, но не автоматизирован)
 python -m scripts.orchestrator approve --snapshot <snapshot_id>
