@@ -65,43 +65,58 @@ def _extract_prompt_fingerprints(snapshot: dict, imm_arch: dict | None):
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="view_snapshot",
-        description="Read-only diagnostic snapshot view (canonical). Prints JSON to stdout only.",
+        description="Read-only diagnostic snapshot view (canonical). Plain text output; non-enforcing.",
     )
     parser.add_argument("snapshot_id", help="Snapshot id (without extensions)")
     args = parser.parse_args()
 
     snapshot_id = args.snapshot_id.strip()
     if not snapshot_id:
-        out = {"error": "INVALID_ARGUMENT", "message": "snapshot_id is empty"}
-        print(json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        print("ERROR: snapshot_id is empty", file=sys.stderr)
         return 1
 
     path = Path("state") / "snapshots" / f"{snapshot_id}.canonical.json"
     if not path.exists():
-        out = {"error": "FILE_NOT_FOUND", "path": str(path)}
-        print(json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        print(f"ERROR: file not found: {path}", file=sys.stderr)
         return 1
 
     try:
         raw = path.read_text(encoding="utf-8")
         snapshot = json.loads(raw)
     except UnicodeDecodeError as e:
-        out = {"error": "DECODE_ERROR", "path": str(path), "message": str(e)}
-        print(json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        print(f"ERROR: decode error: {path}: {e}", file=sys.stderr)
         return 1
     except json.JSONDecodeError as e:
-        out = {"error": "JSON_DECODE_ERROR", "path": str(path), "message": str(e)}
-        print(json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        print(f"ERROR: invalid JSON: {path}: {e}", file=sys.stderr)
         return 1
 
     imm_arch = _extract_immutable_architecture(snapshot)
-    out = {
-        "task_id": _extract_task_id(snapshot),
-        "immutable_architecture": imm_arch,
-        "prompt_fingerprints": _extract_prompt_fingerprints(snapshot, imm_arch),
-    }
+    prompt_fps = _extract_prompt_fingerprints(snapshot, imm_arch)
+    task_id = _extract_task_id(snapshot)
 
-    print(json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    # Plain-text projection of structure (no PASS/FAIL/BLOCKER; no enforcement)
+    print(f"snapshot_id: {snapshot_id}")
+    print(f"path: {path}")
+    print(f"task_id: {task_id}")
+
+    if isinstance(snapshot, dict):
+        print(f"snapshot_top_level_keys: {', '.join(sorted(map(str, snapshot.keys())))}")
+    else:
+        print("snapshot_top_level_keys: <non-dict>")
+
+    if isinstance(imm_arch, dict):
+        print(f"immutable_architecture_keys: {', '.join(sorted(map(str, imm_arch.keys())))}")
+    else:
+        print("immutable_architecture_keys: <missing>")
+
+    if isinstance(prompt_fps, dict) and prompt_fps:
+        print("prompt_fingerprints:")
+        for k in sorted(prompt_fps.keys(), key=lambda x: str(x)):
+            v = prompt_fps.get(k)
+            print(f"  - {k}: {v}")
+    else:
+        print("prompt_fingerprints: <missing>")
+
     return 0
 
 
