@@ -351,6 +351,64 @@ Smoke-test проверяет (без участия реального LLM, в 
 
 ---
 
+## Canonical ERROR_CODE (enforced)
+
+Следующий список ERROR_CODE является **конечным и обязательным**
+для всех enforcement CLI-гейтов проекта.
+
+Использование ERROR_CODE, **не перечисленного ниже**,
+считается **архитектурным нарушением**.
+
+### BLOCKER — нарушение архитектуры или lifecycle (exit code 2)
+
+Используются **только** для ситуаций, при которых
+дальнейшее выполнение pipeline недопустимо.
+
+```text
+LIFECYCLE_VIOLATION
+INVALID_LIFECYCLE_STATE
+EXECUTE_AFTER_MERGE
+APPROVE_MISSING
+SNAPSHOT_INVALID
+SNAPSHOT_IMMUTABLE_VIOLATION
+FINGERPRINT_MISMATCH
+TASK_ID_MISMATCH
+MERGE_STATE_EXISTS
+MERGE_STATE_INVALID
+MERGE_FINGERPRINT_MISMATCH
+```
+
+### FAIL — некорректные данные или результаты (exit code 1)
+
+Используются, когда lifecycle корректен,
+но входные данные или deliverables невалидны.
+
+```text
+DELIVERABLES_CHECK_FAILED
+NODE_COVERAGE_INCOMPLETE
+ANCHORS_INVALID
+OUTPUT_DIR_EXISTS
+INVALID_ARGUMENT
+IO_ERROR
+```
+
+### PASS (exit code 0)
+
+```text
+OK
+```
+
+### Обязательные правила использования ERROR_CODE
+
+- Каждый `ERROR_CODE` жёстко привязан к одному уровню (`PASS`, `FAIL` или `BLOCKER`).
+- Один и тот же `ERROR_CODE` не может использоваться
+  с разными уровнями в разных CLI-инструментах.
+- Семантика ошибки определяется `ERROR_CODE`, а не текстом `message`.
+- `message` является человекочитаемым пояснением
+  и не несёт контрактной нагрузки.
+
+---
+
 ## Lifecycle (канонический, enforced)
 
 Lifecycle проекта является **конечным автоматом**.  
