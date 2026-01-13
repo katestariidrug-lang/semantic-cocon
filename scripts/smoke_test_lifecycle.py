@@ -218,6 +218,18 @@ def main() -> int:
         )
         _expect_pass(r_anchors, "execute/anchors")
 
+        # 4b) post-check ДО MERGE запрещён (попытка по snapshot_id) -> BLOCKER
+        r_post_before_merge = _run(
+            [sys.executable, "scripts/check_deliverables.py", snapshot_id], cwd=repo_root
+        )
+        _expect_blocker(r_post_before_merge, "post-check-before-merge")
+
+        # 4c) post-check по task_id запрещён -> BLOCKER
+        r_post_by_task_id = _run(
+            [sys.executable, "scripts/check_deliverables.py", unique_task_id], cwd=repo_root
+        )
+        _expect_blocker(r_post_by_task_id, "post-check-by-task-id")
+
         # 5) merge
         merge_files_before = _list_merge_id_files(merges_by_run)
 
@@ -238,10 +250,14 @@ def main() -> int:
         # Read merge_id created by THIS merge (robust vs parallel runs / stale state).
         merge_id = _read_new_merge_id(merges_by_run, merge_files_before)
 
+        # 6) post-check без merge_id запрещён -> BLOCKER
+        r_post_missing_merge_id = _run([sys.executable, "scripts/check_deliverables.py"], cwd=repo_root)
+        _expect_blocker(r_post_missing_merge_id, "post-check-missing-merge-id")
 
-        # 6) post-check
+        # 7) post-check (корректный запуск по merge_id) -> PASS
         r_post = _run([sys.executable, "scripts/check_deliverables.py", merge_id], cwd=repo_root)
         _expect_pass(r_post, "post-check")
+
 
         # 7) повторный execute → BLOCKER (STOP-condition)
         r_forbidden = _run(

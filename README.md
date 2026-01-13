@@ -296,11 +296,18 @@ Smoke-test **не использует внутренние API** и
 6. `POST-CHECK`
 7. Повторный `EXECUTE` → **ожидается BLOCKER**
 
-Smoke-test проверяет (без участия реального LLM, в stub-режиме):
+Smoke-test **обязан проверять** (без участия реального LLM, в stub-режиме):
 
 - exit codes строго `0 / 1 / 2`;
 - формат первой строки вывода: `[PASS] / [FAIL] / [BLOCKER]`;
-- запрет `EXECUTE` после MERGE (STOP-condition).
+- запрет `EXECUTE` после MERGE (STOP-condition);
+- **POST-CHECK как внешний гейт (жёсткий контракт, обязательные smoke-сценарии):**
+  - post-check **запрещён до MERGE**;
+  - post-check **запрещён по `snapshot_id`**;
+  - post-check **запрещён по `task_id`**;
+  - post-check **запрещён без `merge_id`**;
+  - post-check **разрешён только по `merge_id` после MERGE**;
+  - любое нарушение = **BLOCKER (exit code 2)**.
 
 Реализация:
 
