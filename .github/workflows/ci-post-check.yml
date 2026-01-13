@@ -28,11 +28,10 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: PASS_1 — DECIDE
-        shell: bash
+      - name: POST-CHECK (must fail without merge_id)
         run: |
-          set -euo pipefail
-          python -m scripts.orchestrator decide
+          set -e
+          python scripts/check_deliverables.py
 
       - name: Resolve snapshot_id (latest)
         id: snapshot
