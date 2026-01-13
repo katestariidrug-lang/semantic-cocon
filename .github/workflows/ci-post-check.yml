@@ -1,6 +1,6 @@
-name: CI: get canonical merge_id (debug)
+name: "CI: get canonical merge_id (debug)"
 
-on:
+"on":
   push:
   pull_request:
 
