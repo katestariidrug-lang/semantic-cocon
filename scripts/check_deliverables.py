@@ -18,17 +18,14 @@ LEVEL_FAIL = "FAIL"
 LEVEL_BLOCKER = "BLOCKER"
 
 ERROR_CODES = {
-    "POST_CHECK_OK",
+    "OK",
     "DELIVERABLES_CHECK_FAILED",
-    "LIFECYCLE_VIOLATION",
-    "MERGE_STATE_MISSING",
-    "MERGE_STATE_INVALID",
-    "SNAPSHOT_CANONICAL_MISSING",
-    "DELIVERABLE_MISSING",
-    "DELIVERABLE_INVALID_JSON",
-    "NODE_COVERAGE_MISMATCH",
+    "NODE_COVERAGE_INCOMPLETE",
     "ANCHORS_INVALID",
     "IO_ERROR",
+    "LIFECYCLE_VIOLATION",
+    "MERGE_STATE_INVALID",
+    "SNAPSHOT_INVALID",
 }
 
 
@@ -138,7 +135,7 @@ def main() -> int:
     merge_state_raw, err = load_json(merge_state_path)
     if merge_state_raw is None:
         r.blocker(
-            "MERGE_STATE_MISSING",
+            "MERGE_STATE_INVALID",
             "missing or unreadable merge-state; post-check allowed only after MERGE",
             evidence={"merge_id": merge_id, "path": str(merge_state_path), "error": err},
         )
@@ -187,7 +184,7 @@ def main() -> int:
 
     if snap_raw is None:
         r.blocker(
-            "SNAPSHOT_CANONICAL_MISSING",
+            "SNAPSHOT_INVALID",
             "missing snapshot canonical for post-check",
             evidence={"merge_id": merge_id, "path": str(snap_path), "error": err},
         )
@@ -265,7 +262,7 @@ def main() -> int:
 
     if missing_files:
         r.fail(
-            "DELIVERABLE_MISSING",
+            "DELIVERABLES_CHECK_FAILED",
             "one or more artifact files are missing",
             evidence={"merge_id": merge_id, "missing": missing_files},
         )
@@ -286,7 +283,7 @@ def main() -> int:
         obj, err = load_json(path)
         if obj is None:
             r.fail(
-                "DELIVERABLE_INVALID_JSON",
+                "DELIVERABLES_CHECK_FAILED",
                 f"invalid JSON deliverable: {fn}",
                 evidence={"path": str(path), "error": err},
             )
@@ -298,7 +295,7 @@ def main() -> int:
         extra = sorted(list(got - expected))
         if missing or extra:
             r.fail(
-                "NODE_COVERAGE_MISMATCH",
+                "NODE_COVERAGE_INCOMPLETE",
                 f"per-node coverage mismatch in {fn} (missing/extra node_id)",
                 evidence={
                     "path": str(path),
@@ -315,7 +312,7 @@ def main() -> int:
     anchors_obj, err = load_json(anchors_path)
     if anchors_obj is None:
         r.fail(
-            "DELIVERABLE_INVALID_JSON",
+            "DELIVERABLES_CHECK_FAILED",
             "invalid JSON deliverable: anchors.json",
             evidence={"path": str(anchors_path), "error": err},
         )
@@ -356,7 +353,7 @@ def main() -> int:
         fa_obj, err = load_json(fa_path)
         if fa_obj is None:
             r.fail(
-                "DELIVERABLE_INVALID_JSON",
+                "DELIVERABLES_CHECK_FAILED",
                 "invalid JSON deliverable: final_artifacts.json",
                 evidence={"path": str(fa_path), "error": err},
             )
@@ -382,7 +379,7 @@ def main() -> int:
             r.emit()
             return r.exit_code()
 
-    r.pass_("POST_CHECK_OK", f"deliverables OK for merge_id={merge_id}")
+    r.pass_("OK", f"deliverables OK for merge_id={merge_id}")
     r.emit()
     return r.exit_code()
 

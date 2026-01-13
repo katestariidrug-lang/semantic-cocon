@@ -3,8 +3,15 @@ import sys
 import os
 
 def die(code: int, msg: str):
-    print(msg)
-    sys.exit(code)
+    # gate_snapshot = enforcement gate => must follow canonical contract
+    # code: 1 = FAIL, 2 = BLOCKER
+    if code == 1:
+        print(f"[FAIL] INVALID_ARGUMENT: {msg}")
+        sys.exit(1)
+    # everything else is a snapshot contract breach => BLOCKER
+    print(f"[BLOCKER] SNAPSHOT_INVALID: {msg}")
+    sys.exit(2)
+
 
 def load_json(path: str):
     with open(path, "r", encoding="utf-8") as f:
@@ -21,16 +28,16 @@ def main():
 
     canonical = os.path.join(base, f"{snap_id}.canonical.json")
     if not os.path.exists(canonical):
-        die(2, f"[GATE_FAIL] canonical snapshot not found: {canonical}")
+        die(2, f"canonical snapshot not found: {canonical}")
 
     d = load_json(canonical)
     ia = d.get("immutable_architecture")
     if not isinstance(ia, dict):
-        die(3, "[GATE_FAIL] immutable_architecture missing or not dict")
+        die(2, "immutable_architecture missing or not dict")
 
     reg = ia.get("node_registry")
     if not isinstance(reg, (dict, list)):
-        die(4, f"[GATE_FAIL] node_registry missing or invalid type: {type(reg).__name__}")
+        die(2, f"node_registry missing or invalid type: {type(reg).__name__}")
 
     # node ids (dict: keys, list: node_id field)
     if isinstance(reg, dict):
@@ -39,31 +46,30 @@ def main():
         node_ids = [n.get("node_id") for n in reg if isinstance(n, dict) and n.get("node_id")]
 
     if not node_ids:
-        die(5, "[GATE_FAIL] node_registry has no node_ids")
+        die(2, "node_registry has no node_ids")
 
     # owner_map in YOUR schema is a LIST of records
     om = ia.get("owner_map")
     if not isinstance(om, list):
-        die(6, f"[GATE_FAIL] owner_map must be list, got: {type(om).__name__}")
+        die(2, f"owner_map must be list, got: {type(om).__name__}")
 
     owned_ids = {x.get("node_id") for x in om if isinstance(x, dict) and x.get("node_id")}
     missing = [nid for nid in node_ids if nid and nid not in owned_ids]
     if missing:
-        print(f"[GATE_FAIL] owner_map does not cover all nodes. missing={len(missing)}")
-        print("missing_sample=", missing[:8])
-        sys.exit(7)
+        die(2, f"owner_map does not cover all nodes. missing={len(missing)} sample={missing[:8]}")
+
 
     # hub_chain sanity
     hc = ia.get("hub_chain")
     if not isinstance(hc, list) or len(hc) < 1:
-        die(8, f"[GATE_FAIL] hub_chain must be non-empty list, got: {type(hc).__name__}")
+        die(2, f"hub_chain must be non-empty list, got: {type(hc).__name__}")
 
     # linking matrix sanity
     lm = ia.get("linking_matrix_skeleton")
     if not isinstance(lm, list) or len(lm) < 1:
-        die(9, f"[GATE_FAIL] linking_matrix_skeleton must be non-empty list, got: {type(lm).__name__}")
+        die(2, f"linking_matrix_skeleton must be non-empty list, got: {type(lm).__name__}")
 
-    print("[GATE_OK] Snapshot is approvable by structural checks.")
+    print("[PASS] OK: Snapshot is approvable by structural checks.")
     print("snapshot_id=", snap_id)
     print("node_registry_len=", len(node_ids))
     print("owner_map_len=", len(om))

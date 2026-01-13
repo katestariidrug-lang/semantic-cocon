@@ -126,4 +126,5 @@ def require_not_merged(snapshot_id: str, repo_root: str | Path = ".") -> None:
     """
     st = infer_snapshot_state(snapshot_id, repo_root=repo_root)
     if st == LifecycleState.MERGED:
-        raise LifecycleViolation(f"STOP_CONDITION: EXECUTE_FORBIDDEN_AFTER_MERGE (snapshot_id={snapshot_id})")
+        raise LifecycleViolation(f"EXECUTE forbidden after MERGE (snapshot_id={snapshot_id})")
+

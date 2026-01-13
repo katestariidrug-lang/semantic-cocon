@@ -25,7 +25,7 @@ class StepResult:
 
 
 def _die(msg: str) -> None:
-    print(f"[BLOCKER] SMOKE_TEST_FAILED: {msg}")
+    print(f"[BLOCKER] LIFECYCLE_VIOLATION: {msg}")
     raise SystemExit(2)
 
 
@@ -259,7 +259,7 @@ def main() -> int:
         )
         _expect_blocker(r_forbidden, "execute-after-merge")
 
-        print("[PASS] SMOKE_TEST_PASSED: lifecycle + CLI contract OK")
+        print("[PASS] OK: lifecycle + CLI contract OK")
         return 0
     finally:
         # Restore original task.json no matter what happened.

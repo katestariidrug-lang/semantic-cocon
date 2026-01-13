@@ -40,17 +40,21 @@ LEVEL_FAIL = "FAIL"
 LEVEL_BLOCKER = "BLOCKER"
 
 ERROR_CODES = {
-    "DECIDE_OK",
-    "APPROVE_OK",
-    "EXECUTE_OK",
+    "OK",
     "LIFECYCLE_VIOLATION",
-    "ORCHESTRATOR_FAILED",
+    "IO_ERROR",
+    "INVALID_ARGUMENT",
+    "OUTPUT_DIR_EXISTS",
+    "TASK_ID_MISMATCH",
+    "SNAPSHOT_INVALID",
+    "SNAPSHOT_IMMUTABLE_VIOLATION",
+    "FINGERPRINT_MISMATCH",
 }
 
 def emit(level: str, code: str, message: str, evidence: dict | None = None) -> None:
     if code not in ERROR_CODES:
         # неизвестный код = нарушение контракта => BLOCKER, но exit решает main()
-        print(f"[{LEVEL_BLOCKER}] ORCHESTRATOR_FAILED: unknown error code used")
+        print(f"[{LEVEL_BLOCKER}] LIFECYCLE_VIOLATION: unknown error code used")
         payload = {"bad_code": code}
         if evidence is not None:
             payload.update(evidence)
@@ -229,7 +233,7 @@ def cmd_decide() -> None:
     # 11) вывести результат строго по контракту
     emit(
         LEVEL_PASS,
-        "DECIDE_OK",
+        "OK",
         "snapshot created (snapshot/canonical/hash written)",
         evidence={
             "snapshot": str(paths.snapshot_path),
@@ -260,7 +264,7 @@ def cmd_approve(snapshot_id: str) -> None:
 
     hash_hex = read_sha256_file(hash_path)
     if not hash_hex:
-        raise ValueError(f"EMPTY_SHA256_FILE: {hash_path}")
+        raise LifecycleViolation(f"SNAPSHOT_INVALID: EMPTY_SHA256_FILE {hash_path}")
 
     APPROVALS_DIR.mkdir(parents=True, exist_ok=True)
     approval_path = approval_file_for_hash(hash_hex)
@@ -269,7 +273,7 @@ def cmd_approve(snapshot_id: str) -> None:
     if approval_path.exists():
         emit(
             LEVEL_PASS,
-            "APPROVE_OK",
+            "OK",
             "approval already exists (idempotent)",
             evidence={"approval": str(approval_path)},
         )
@@ -279,7 +283,7 @@ def cmd_approve(snapshot_id: str) -> None:
 
     emit(
         LEVEL_PASS,
-        "APPROVE_OK",
+        "OK",
         "approval created",
         evidence={"approval": str(approval_path)},
     )
@@ -304,11 +308,11 @@ def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str, st
 
     ok, msg = verify_snapshot_files(snapshot_path, hash_path)
     if not ok:
-        raise ValueError(f"VERIFY_FAIL: {msg}")
+        raise LifecycleViolation(f"SNAPSHOT_INVALID: {msg}")
 
     hash_hex = read_sha256_file(hash_path)
     if not hash_hex:
-        raise ValueError(f"EMPTY_SHA256_FILE: {hash_path}")
+        raise LifecycleViolation(f"SNAPSHOT_INVALID: EMPTY_SHA256_FILE {hash_path}")
 
     # STOP-CONDITION: EXECUTE запрещён после MERGE
     # Authoritative source of truth: state/merges/by_run/<task_id>__<hashprefix>.merge_id
@@ -322,20 +326,21 @@ def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str, st
     if merge_ptr.exists():
         merge_id = merge_ptr.read_text(encoding="utf-8").strip()
         raise LifecycleViolation(
-            f"STOP_CONDITION: EXECUTE_FORBIDDEN_AFTER_MERGE (merge_id={merge_id})"
+            f"EXECUTE forbidden after MERGE (merge_id={merge_id})"
         )
+
 
 
     # README требует immutable_fingerprint как обязательный маркер snapshot-совместимости.
     # Если его нет — это BLOCKER до любого PASS_2.
     if "immutable_fingerprint" not in arch_decision:
-        raise ValueError("IMMUTABLE_FINGERPRINT_MISSING_IN_SNAPSHOT")
+        raise LifecycleViolation("SNAPSHOT_IMMUTABLE_VIOLATION: immutable_fingerprint missing in snapshot")
 
     # IMMUTABILITY ENFORCEMENT: immutable_fingerprint must match computed value
     immutable_fp = fingerprint_immutable_architecture(arch_decision)
     if arch_decision.get("immutable_fingerprint") != immutable_fp:
-        raise ValueError(
-            f"IMMUTABLE_FINGERPRINT_MISMATCH: snapshot={arch_decision.get('immutable_fingerprint')} computed={immutable_fp}"
+        raise LifecycleViolation(
+            f"FINGERPRINT_MISMATCH: snapshot={arch_decision.get('immutable_fingerprint')} computed={immutable_fp}"
         )
 
 
@@ -349,7 +354,7 @@ def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str, st
 
     missing_keys = [k for k in cur_fp.keys() if k not in snap_fp]
     if missing_keys:
-        raise ValueError(f"PROMPT_FINGERPRINT_MISSING_IN_SNAPSHOT: missing={missing_keys}")
+        raise LifecycleViolation(f"SNAPSHOT_INVALID: PROMPT_FINGERPRINT_MISSING missing={missing_keys}")
 
     mismatched = {
         k: {"snapshot": snap_fp.get(k), "current": cur_fp.get(k)}
@@ -357,7 +362,7 @@ def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str, st
         if snap_fp.get(k) != cur_fp.get(k)
     }
     if mismatched:
-        raise ValueError(f"PROMPT_FINGERPRINT_MISMATCH: {mismatched}")
+        raise LifecycleViolation(f"FINGERPRINT_MISMATCH: prompt_fingerprints mismatched={mismatched}")
 
     return arch_decision, hash_hex, immutable_fp
 
@@ -474,7 +479,7 @@ def cmd_execute(snapshot_path: str, stage: str, force: bool = False) -> None:
     
     emit(
         LEVEL_PASS,
-        "EXECUTE_OK",
+        "OK",
         "stage executed; artifacts written",
         evidence={"stage": stage, "out_dir": str(out_dir)},
     )
@@ -520,7 +525,7 @@ def main(argv: list[str]) -> int:
         emit(LEVEL_BLOCKER, "LIFECYCLE_VIOLATION", str(e))
         return EXIT_BLOCKER
     except Exception as e:
-        emit(LEVEL_FAIL, "ORCHESTRATOR_FAILED", str(e))
+        emit(LEVEL_FAIL, "IO_ERROR", str(e))
         return EXIT_FAIL
 
 

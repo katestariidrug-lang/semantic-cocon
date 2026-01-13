@@ -16,23 +16,21 @@ LEVEL_FAIL = "FAIL"
 LEVEL_BLOCKER = "BLOCKER"
 
 ERROR_CODES = {
-    "MERGE_OK",
-    "INPUT_MISSING",
-    "INVALID_SNAPSHOT_ID_FORMAT",
-    "RUN_MISMATCH",
-    "IMMUTABLE_FINGERPRINT_MISSING",
-    "IMMUTABLE_FINGERPRINT_MISMATCH",
-    "MERGE_STATE_ALREADY_EXISTS",
-    "MERGE_POINTER_ALREADY_EXISTS",
-    "INVALID_JSON",
+    "OK",
+    "INVALID_ARGUMENT",
     "IO_ERROR",
-    "MERGE_FAILED",
+    "TASK_ID_MISMATCH",
+    "SNAPSHOT_IMMUTABLE_VIOLATION",
+    "MERGE_FINGERPRINT_MISMATCH",
+    "MERGE_STATE_EXISTS",
+    "MERGE_STATE_INVALID",
+    "LIFECYCLE_VIOLATION",
 }
 
 def emit(level: str, code: str, message: str, evidence: Optional[dict] = None) -> None:
     if code not in ERROR_CODES:
         # неизвестный код = нарушение контракта => BLOCKER, но формат строки не ломаем
-        print(f"[{LEVEL_BLOCKER}] MERGE_FAILED: unknown error code used")
+        print(f"[{LEVEL_BLOCKER}] LIFECYCLE_VIOLATION: unknown error code used")
         payload = {"bad_code": code}
         if evidence is not None:
             payload.update(evidence)
@@ -65,7 +63,7 @@ def _read_json(path: Path) -> Any:
     except json.JSONDecodeError as e:
         emit(
             LEVEL_FAIL,
-            "INVALID_JSON",
+            "MERGE_STATE_INVALID",
             "invalid json",
             evidence={"path": str(path), "error": str(e)},
         )
@@ -89,7 +87,7 @@ def _require_dir(path: Path, name: str) -> None:
     if not path.exists() or not path.is_dir():
         emit(
             LEVEL_FAIL,
-            "INPUT_MISSING",
+            "IO_ERROR",
             f"missing required directory: {name}",
             evidence={"path": str(path)},
         )
@@ -100,7 +98,7 @@ def _require_file(path: Path, name: str) -> None:
     if not path.exists() or not path.is_file():
         emit(
             LEVEL_FAIL,
-            "INPUT_MISSING",
+            "IO_ERROR",
             f"missing required file: {name}",
             evidence={"path": str(path)},
         )
@@ -122,7 +120,7 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
     if "__" not in core_snapshot_id:
         emit(
             LEVEL_FAIL,
-            "INVALID_SNAPSHOT_ID_FORMAT",
+            "INVALID_ARGUMENT",
             "invalid core_snapshot_id format (expected <task_id>__<hashprefix>)",
             evidence={"core_snapshot_id": core_snapshot_id},
         )
@@ -131,7 +129,7 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
     if "__" not in anchors_snapshot_id:
         emit(
             LEVEL_FAIL,
-            "INVALID_SNAPSHOT_ID_FORMAT",
+            "INVALID_ARGUMENT",
             "invalid anchors_snapshot_id format (expected <task_id>__<hashprefix>)",
             evidence={"anchors_snapshot_id": anchors_snapshot_id},
         )
@@ -143,7 +141,7 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
     if (core_task_id, core_hashprefix) != (anch_task_id, anch_hashprefix):
         emit(
             LEVEL_FAIL,
-            "RUN_MISMATCH",
+            "TASK_ID_MISMATCH",
             "CORE and ANCHORS belong to different runs",
             evidence={"core_snapshot_id": core_snapshot_id, "anchors_snapshot_id": anchors_snapshot_id},
         )
@@ -162,13 +160,13 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
     # FAIL-FAST: не перезаписываем merge-state (иначе теряется точка невозврата)
     if merge_state_path.exists():
         raise MergeContractViolation(
-            "MERGE_STATE_ALREADY_EXISTS",
+            "MERGE_STATE_EXISTS",
             "merge-state already exists (refusing to overwrite; MERGE is terminal)",
             evidence={"path": str(merge_state_path)},
         )
     if merge_ptr_path.exists():
         raise MergeContractViolation(
-            "MERGE_POINTER_ALREADY_EXISTS",
+            "MERGE_STATE_EXISTS",
             "merge pointer already exists (refusing to overwrite; MERGE is terminal)",
             evidence={"path": str(merge_ptr_path)},
         )
@@ -202,7 +200,7 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
     if not isinstance(core_exec, dict):
         emit(
             LEVEL_FAIL,
-            "INVALID_JSON",
+            "MERGE_STATE_INVALID",
             "core execution_result.json must be a JSON object",
             evidence={"path": str(core_exec_path), "got_type": type(core_exec).__name__},
         )
@@ -211,7 +209,7 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
     if not isinstance(anchors_exec, dict):
         emit(
             LEVEL_FAIL,
-            "INVALID_JSON",
+            "MERGE_STATE_INVALID",
             "anchors execution_result.json must be a JSON object",
             evidence={"path": str(anchors_exec_path), "got_type": type(anchors_exec).__name__},
         )
@@ -222,7 +220,7 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
 
     if not core_fp or not anchors_fp:
         raise MergeContractViolation(
-            "IMMUTABLE_FINGERPRINT_MISSING",
+            "SNAPSHOT_IMMUTABLE_VIOLATION",
             "immutable_fingerprint missing in CORE or ANCHORS execution_result",
             evidence={"core_fp": core_fp, "anchors_fp": anchors_fp},
         )
@@ -230,7 +228,7 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
 
     if core_fp != anchors_fp:
         raise MergeContractViolation(
-            "IMMUTABLE_FINGERPRINT_MISMATCH",
+            "MERGE_FINGERPRINT_MISMATCH",
             "immutable_fingerprint mismatch between CORE and ANCHORS",
             evidence={"core_fp": core_fp, "anchors_fp": anchors_fp},
         )
@@ -281,7 +279,7 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
 
     emit(
         LEVEL_PASS,
-        "MERGE_OK",
+        "OK",
         "merge completed; merge-state and pointer created",
         evidence={
             "core_snapshot_id": core_snapshot_id,
@@ -318,5 +316,5 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Exception as e:
-        emit(LEVEL_FAIL, "MERGE_FAILED", f"unexpected runtime error: {e}")
+        emit(LEVEL_FAIL, "IO_ERROR", f"unexpected runtime error: {e}")
         raise SystemExit(EXIT_FAIL)
