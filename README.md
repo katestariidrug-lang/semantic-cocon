@@ -1042,6 +1042,19 @@ GitHub Actions является **reference enforcement** для POST-CHECK:
 
 Workflow: `.github/workflows/ci-post-check.yml`.
 
+### Branch protection (main) — запрет merge без зелёного CI (обязательный)
+
+Наличие CI само по себе не является enforcement: без защитных правил ветки
+merge в `main` можно выполнить, игнорируя красные проверки.
+
+Поэтому `main` обязан быть защищён настройками GitHub (Branch protection rules / Rulesets):
+- включено **Require status checks to pass before merging**
+- required status check включает workflow/job, выполняющий POST-CHECK (`ci-post-check`)
+- включено **Include administrators** (правило действует на всех)
+- (рекомендуется) включено **Require branches to be up to date before merging**
+
+Критерий: merge в `main` невозможен, если CI (POST-CHECK) не завершился PASS.
+
 ---
 
 ## Структура репозитория
