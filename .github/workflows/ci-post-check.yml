@@ -75,7 +75,7 @@ jobs:
             --core-snapshot-id "$RUN_ID" \
             --anchors-snapshot-id "$RUN_ID"
 
-      - name: Print canonical merge_id (debug)
+      - name: POST-CHECK (merge_id only, mandatory)
         shell: bash
         run: |
           set -euo pipefail
@@ -84,4 +84,5 @@ jobs:
           test -f "$POINTER"
           MERGE_ID="$(cat "$POINTER" | tr -d '[:space:]')"
           test -n "$MERGE_ID"
-          echo "MERGE_ID=$MERGE_ID"
+          python scripts/check_deliverables.py "$MERGE_ID"
+
