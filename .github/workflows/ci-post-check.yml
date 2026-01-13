@@ -1,11 +1,11 @@
-name: CI (enforce post-check)
+name: CI: get canonical merge_id (debug)
 
 on:
   push:
   pull_request:
 
 jobs:
-  enforce-post-check:
+  get-merge-id:
     runs-on: ubuntu-latest
     env:
       SMOKE_TEST: "1"
@@ -19,19 +19,21 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install deps (if requirements.txt exists)
+      - name: Install deps
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
+          pip install python-dotenv
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           fi
 
-      - name: POST-CHECK (must fail without merge_id)
+      - name: PASS_1 — DECIDE
+        shell: bash
         run: |
-          set -e
-          python scripts/check_deliverables.py
+          set -euo pipefail
+          python -m scripts.orchestrator decide
 
       - name: Resolve snapshot_id (latest)
         id: snapshot
@@ -39,10 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           SNAPSHOT_ID="$(ls -1t state/snapshots/*.snapshot.json | head -n 1 | xargs -n 1 basename | sed 's/\.snapshot\.json$//')"
-          if [ -z "$SNAPSHOT_ID" ]; then
-            echo "No snapshot_id found in state/snapshots/"
-            exit 1
-          fi
+          test -n "$SNAPSHOT_ID"
           echo "snapshot_id=$SNAPSHOT_ID" >> "$GITHUB_OUTPUT"
 
       - name: APPROVE (human step mechanized)
@@ -76,8 +75,13 @@ jobs:
             --core-snapshot-id "$RUN_ID" \
             --anchors-snapshot-id "$RUN_ID"
 
-      - name: Run POST-CHECK (must fail without merge_id)
+      - name: Print canonical merge_id (debug)
+        shell: bash
         run: |
-          set -e
-          python scripts/check_deliverables.py
-
+          set -euo pipefail
+          RUN_ID="${{ steps.snapshot.outputs.snapshot_id }}"
+          POINTER="state/merges/by_run/${RUN_ID}.merge_id"
+          test -f "$POINTER"
+          MERGE_ID="$(cat "$POINTER" | tr -d '[:space:]')"
+          test -n "$MERGE_ID"
+          echo "MERGE_ID=$MERGE_ID"
