@@ -1,5 +1,6 @@
 import argparse
 import json
+import hashlib
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -25,6 +26,7 @@ ERROR_CODES = {
     "MERGE_STATE_EXISTS",
     "MERGE_STATE_INVALID",
     "LIFECYCLE_VIOLATION",
+    "FINGERPRINT_MISMATCH",
 }
 
 def emit(level: str, code: str, message: str, evidence: Optional[dict] = None) -> None:
@@ -41,7 +43,49 @@ def emit(level: str, code: str, message: str, evidence: Optional[dict] = None) -
     if evidence is not None:
         print(json.dumps(evidence, ensure_ascii=False, sort_keys=True))
 
+def enforce_readme_fingerprint_or_blocker() -> tuple[bool, str, dict]:
+    """
+    Drift guard for README.md (architectural truth).
+    mismatch or missing fingerprint file => BLOCKER + FINGERPRINT_MISMATCH
+    """
+    try:
+        expected = README_FP_PATH.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        return (
+            False,
+            f"README fingerprint file missing/unreadable: {README_FP_PATH}",
+            {"error": str(e), "path": str(README_FP_PATH)},
+        )
+
+    if not expected:
+        return (
+            False,
+            f"README fingerprint file is empty: {README_FP_PATH}",
+            {"path": str(README_FP_PATH)},
+        )
+
+    try:
+        data = README_PATH.read_bytes()
+    except Exception as e:
+        return (
+            False,
+            f"README missing/unreadable: {README_PATH}",
+            {"error": str(e), "path": str(README_PATH)},
+        )
+
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != expected:
+        return (
+            False,
+            "README.md fingerprint mismatch",
+            {"expected": expected, "actual": actual},
+        )
+
+    return True, "OK", {"readme": str(README_PATH), "fingerprint": actual}
+
+
 class MergeContractViolation(RuntimeError):
+
     """
     Нарушение контракта MERGE (инварианты, повторный merge, fingerprint mismatch).
     Должно приводить к exit code 2 (BLOCKER).
@@ -53,6 +97,10 @@ class MergeContractViolation(RuntimeError):
 
 ROOT = Path(__file__).resolve().parents[1]  # project-root/
 STATE_DIR = ROOT / "state"
+
+README_PATH = ROOT / "README.md"
+README_FP_PATH = STATE_DIR / "architecture" / "README.sha256"
+
 
 
 def _read_json(path: Path) -> Any:
@@ -292,6 +340,11 @@ def merge(core_snapshot_id: str, anchors_snapshot_id: str, outputs_dir: Path) ->
 
 
 def main() -> int:
+    ok, msg, evidence = enforce_readme_fingerprint_or_blocker()
+    if not ok:
+        emit(LEVEL_BLOCKER, "FINGERPRINT_MISMATCH", msg, evidence=evidence)
+        return EXIT_BLOCKER
+
     p = argparse.ArgumentParser(
         description="Deterministic MERGE of PASS_2A (CORE snapshot) + PASS_2B (ANCHORS snapshot). LLM must not be involved."
     )

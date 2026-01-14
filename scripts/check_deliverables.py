@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import json
 import argparse
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
-
 
 # -------------------------
 # Unified post-check contract
@@ -26,6 +26,7 @@ ERROR_CODES = {
     "LIFECYCLE_VIOLATION",
     "MERGE_STATE_INVALID",
     "SNAPSHOT_INVALID",
+    "FINGERPRINT_MISMATCH",
 }
 
 
@@ -79,6 +80,58 @@ class Reporter:
                 print(json.dumps(f.evidence, ensure_ascii=False, sort_keys=True))
 
 
+ROOT = Path(__file__).resolve().parents[1]  # project-root/
+STATE_DIR = ROOT / "state"
+
+README_PATH = ROOT / "README.md"
+README_FP_PATH = STATE_DIR / "architecture" / "README.sha256"
+
+
+def enforce_readme_fingerprint_or_blocker(r: "Reporter") -> bool:
+    """
+    Drift guard for README.md (architectural truth).
+    mismatch or missing fingerprint file => BLOCKER + FINGERPRINT_MISMATCH
+    """
+    try:
+        expected = README_FP_PATH.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        r.blocker(
+            "FINGERPRINT_MISMATCH",
+            f"README fingerprint file missing/unreadable: {README_FP_PATH}",
+            evidence={"error": str(e), "path": str(README_FP_PATH)},
+        )
+        return False
+
+    if not expected:
+        r.blocker(
+            "FINGERPRINT_MISMATCH",
+            f"README fingerprint file is empty: {README_FP_PATH}",
+            evidence={"path": str(README_FP_PATH)},
+        )
+        return False
+
+    try:
+        data = README_PATH.read_bytes()
+    except Exception as e:
+        r.blocker(
+            "FINGERPRINT_MISMATCH",
+            f"README missing/unreadable: {README_PATH}",
+            evidence={"error": str(e), "path": str(README_PATH)},
+        )
+        return False
+
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != expected:
+        r.blocker(
+            "FINGERPRINT_MISMATCH",
+            "README.md fingerprint mismatch",
+            evidence={"expected": expected, "actual": actual},
+        )
+        return False
+
+    return True
+
+
 def load_json(path: Path) -> Tuple[Optional[Any], Optional[str]]:
     try:
         with path.open("r", encoding="utf-8") as f:
@@ -114,6 +167,10 @@ def extract_ids(obj: Any) -> Set[str]:
 
 def main() -> int:
     r = Reporter()
+
+    if not enforce_readme_fingerprint_or_blocker(r):
+        r.emit()
+        return r.exit_code()
 
     p = argparse.ArgumentParser(description="Post-check deliverables by merge-state (authoritative).")
     p.add_argument("merge_id", nargs="?", help="merge_id (positional)")
