@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import subprocess
@@ -81,6 +82,9 @@ PASS_2_PROMPT_ANCHORS_PATH = PROMPTS_DIR / "pass_2_execute_anchors.md"
 TASK_JSON_PATH = INPUT_DIR / "task.json"
 ARCH_SCHEMA_PATH = STATE_DIR / "arch_decision_schema.json"
 
+README_PATH = ROOT / "README.md"
+README_FP_PATH = STATE_DIR / "architecture" / "README.sha256"
+
 
 def read_text(path: Path) -> str:
     if not path.exists():
@@ -102,7 +106,53 @@ def write_json_pretty(path: Path, obj: Any) -> None:
     path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def enforce_readme_fingerprint_or_blocker() -> tuple[bool, str, dict]:
+    """
+    Drift guard for README.md (architectural truth).
+    Returns:
+      (ok, message, evidence)
+    Contract:
+      mismatch or missing fingerprint file => BLOCKER + FINGERPRINT_MISMATCH
+    """
+    try:
+        expected = README_FP_PATH.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        return (
+            False,
+            f"README fingerprint file missing/unreadable: {README_FP_PATH}",
+            {"error": str(e), "path": str(README_FP_PATH)},
+        )
+
+    if not expected:
+        return (
+            False,
+            f"README fingerprint file is empty: {README_FP_PATH}",
+            {"path": str(README_FP_PATH)},
+        )
+
+    try:
+        data = README_PATH.read_bytes()
+    except Exception as e:
+        return (
+            False,
+            f"README missing/unreadable: {README_PATH}",
+            {"error": str(e), "path": str(README_PATH)},
+        )
+
+    actual = hashlib.sha256(data).hexdigest()
+
+    if actual != expected:
+        return (
+            False,
+            "README.md fingerprint mismatch",
+            {"expected": expected, "actual": actual},
+        )
+
+    return True, "OK", {"readme": str(README_PATH), "fingerprint": actual}
+
+
 def build_pass_1_request(task_json: Dict[str, Any], arch_schema_json: Dict[str, Any], pass_1_prompt: str) -> str:
+
     """
     Склеиваем единый запрос: промпт + TASK_JSON + ARCH_SCHEMA_JSON.
     Это нужно, чтобы модель не "забыла" схему и не придумала свою.
@@ -326,7 +376,7 @@ def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str, st
     if merge_ptr.exists():
         merge_id = merge_ptr.read_text(encoding="utf-8").strip()
         raise LifecycleViolation(
-            f"EXECUTE forbidden after MERGE (merge_id={merge_id})"
+            f"EXECUTE_AFTER_MERGE: EXECUTE forbidden after MERGE (merge_id={merge_id})"
         )
 
 
@@ -486,6 +536,11 @@ def cmd_execute(snapshot_path: str, stage: str, force: bool = False) -> None:
 
 
 def main(argv: list[str]) -> int:
+    ok, msg, evidence = enforce_readme_fingerprint_or_blocker()
+    if not ok:
+        emit(LEVEL_BLOCKER, "FINGERPRINT_MISMATCH", msg, evidence=evidence)
+        return EXIT_BLOCKER
+
     parser = argparse.ArgumentParser(prog="orchestrator", description="Two-pass LLM workflow orchestrator")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -522,8 +577,19 @@ def main(argv: list[str]) -> int:
             raise ValueError(f"Unknown command: {args.cmd}")
         return EXIT_PASS
     except LifecycleViolation as e:
-        emit(LEVEL_BLOCKER, "LIFECYCLE_VIOLATION", str(e))
+        msg = str(e)
+        code = "LIFECYCLE_VIOLATION"
+
+        # Allow embedding canonical ERROR_CODE in exception message as "ERROR_CODE: details"
+        if ":" in msg:
+            prefix = msg.split(":", 1)[0].strip()
+            if prefix in ERROR_CODES:
+                code = prefix
+                msg = msg.split(":", 1)[1].lstrip()
+
+        emit(LEVEL_BLOCKER, code, msg)
         return EXIT_BLOCKER
+
     except Exception as e:
         emit(LEVEL_FAIL, "IO_ERROR", str(e))
         return EXIT_FAIL

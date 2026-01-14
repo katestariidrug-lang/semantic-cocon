@@ -13,10 +13,41 @@
   - запреты
   - семантика состояний
 
-### Обязательное правило
+### Обязательное правило (process-level)
 
 README.md — единственный источник архитектурной истины.
-Любые внешние заметки/контексты для работы с LLM являются вспомогательными
+
+**Процесс изменения архитектуры / контрактов:**
+- Любое изменение, затрагивающее архитектурный контракт (lifecycle, CLI-контракты, инварианты, запреты, семантику состояний),
+  **обязано начинаться с правки README.md**.
+- Любая правка кода/CI/скриптов, которая меняет контракт, но не отражена в README.md,
+  считается **багом** (нарушение иерархии источников истины).
+
+### Архитектурный fingerprint README.md (enforced)
+
+README.md является **контрактным артефактом** и имеет
+**архитектурный fingerprint** (детерминированный hash содержимого файла).
+
+Правила:
+
+- fingerprint README.md **проверяется enforcement-кодом**;
+- несовпадение fingerprint README.md и зафиксированного значения
+  считается **нарушением архитектурного контракта**;
+- любое исполнение lifecycle или enforcement-кода
+  при несовпадении fingerprint README.md **обязано завершаться BLOCKER**;
+- обновление fingerprint README.md допускается **только вместе**
+  с осознанным изменением README.md.
+
+Назначение fingerprint:
+
+- защита от незаметного дрейфа архитектурного контракта;
+- формальная связка README.md ↔ enforcement-код;
+- исключение ситуаций, когда код меняет контракт без отражения в README.md.
+
+README.md остаётся **единственной контрактной точкой**,
+а fingerprint служит механизмом enforcement, а не альтернативным источником истины.
+
+Любые внешние заметки/контексты для работы с LLM (включая SYSTEM_CONTEXT.md) являются вспомогательными
 и **не имеют контрактной силы**.
 
 Workflow для работы с LLM, где сначала принимаются архитектурные решения, затем выполняется строго ограниченная генерация структурированных артефактов, а результат можно проверить и воспроизвести.
@@ -310,19 +341,16 @@ Smoke-test **обязан проверять** (без участия реаль
 - формат первой строки вывода: `[PASS] / [FAIL] / [BLOCKER]`;
 - запрет `EXECUTE` после MERGE (STOP-condition);
 - **POST-CHECK: контрактные запреты и разрешённый запуск (обязательные smoke-сценарии):**
-  - post-check **запрещён до MERGE**;
-  - post-check **запрещён по `snapshot_id`**;
-  - post-check **запрещён по `task_id`**;
-  - post-check **запрещён без `merge_id`**;
-  - post-check **разрешён только по `merge_id` после MERGE**;
-  - любое нарушение = **BLOCKER (exit code 2)**.
+  - post-check выполняется **только после MERGE**
+  - post-check выполняется **исключительно по `merge_id`**
+  - семантика ошибок и exit codes соответствует README.md
 
 Реализация:
 
 - `scripts/smoke_test_lifecycle.py`
 
-Удаление, игнорирование или «ослабление» smoke-test
-считается нарушением архитектурного контракта проекта.
+Smoke-test является локальным предохранителем от регрессий.
+Reference enforcement архитектурных контрактов выполняется CI (GitHub Actions), согласно README.md.
 
 ### Соглашение о проверках (архитектурный контракт)
 
@@ -426,7 +454,7 @@ OK
 
 ## Lifecycle (канонический, enforced)
 
-Lifecycle проекта является **конечным автоматом**.  
+Lifecycle проекта соответствует каноническому описанию в README.md и не расширяется в SYSTEM_CONTEXT.md.
 Переходы между состояниями жёстко зафиксированы и проверяются кодом.
 Никакие шаги не могут быть выполнены «повторно» или «обходным путём».
 
@@ -1048,10 +1076,11 @@ Workflow: `.github/workflows/ci-post-check.yml`.
 merge в `main` можно выполнить, игнорируя красные проверки.
 
 Поэтому `main` обязан быть защищён настройками GitHub (Branch protection rules / Rulesets):
+- включено **Require a pull request before merging**
 - включено **Require status checks to pass before merging**
-- required status check включает workflow/job, выполняющий POST-CHECK (`ci-post-check`)
-- включено **Include administrators** (правило действует на всех)
-- (рекомендуется) включено **Require branches to be up to date before merging**
+- required status check включает job `get-merge-id`, выполняющий reference CI POST-CHECK
+- включено **Require branches to be up to date before merging**
+- включено **Do not allow bypassing the above settings** (обход правил запрещён, включая администраторов)
 
 Критерий: merge в `main` невозможен, если CI (POST-CHECK) не завершился PASS.
 
@@ -1140,6 +1169,15 @@ merge в `main` можно выполнить, игнорируя красные
   - **TYPE:** canonical
   - **Lifecycle:** PASS_1 / DECIDE
   - Роль: schema/контракт формата ARCH_DECISION_JSON (валидация выхода PASS_1).
+
+#### `state/architecture/` — архитектурные fingerprints (drift guard)
+
+- `README.sha256`
+  - **TYPE:** canonical
+  - **Lifecycle:** глобально
+  - Роль: зафиксированный архитектурный fingerprint `README.md` (drift guard).
+    Используется enforcement-кодом для обнаружения расхождений README.md ↔ код.
+    Несовпадение fingerprint = BLOCKER.
 
 #### `state/snapshots/` — snapshot-артефакты PASS_1
 
