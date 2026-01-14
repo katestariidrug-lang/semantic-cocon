@@ -93,7 +93,7 @@ def enforce_readme_fingerprint_or_blocker(r: "Reporter") -> bool:
     mismatch or missing fingerprint file => BLOCKER + FINGERPRINT_MISMATCH
     """
     try:
-        expected = README_FP_PATH.read_text(encoding="utf-8").strip()
+        expected = README_FP_PATH.read_text(encoding="utf-8").strip().lower()
     except Exception as e:
         r.blocker(
             "FINGERPRINT_MISMATCH",
@@ -120,8 +120,10 @@ def enforce_readme_fingerprint_or_blocker(r: "Reporter") -> bool:
         )
         return False
 
-    actual = hashlib.sha256(data).hexdigest()
+    actual = hashlib.sha256(data).hexdigest().lower()
+
     if actual != expected:
+
         r.blocker(
             "FINGERPRINT_MISMATCH",
             "README.md fingerprint mismatch",
