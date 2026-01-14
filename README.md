@@ -1179,6 +1179,64 @@ merge в `main` можно выполнить, игнорируя красные
     Используется enforcement-кодом для обнаружения расхождений README.md ↔ код.
     Несовпадение fingerprint = BLOCKER.
 
+---
+
+## Entrypoints проекта и обязательность drift guard (governance)
+
+Этот раздел является **обязательным governance-контрактом**.
+
+Цель: гарантировать, что **любой исполняемый entrypoint**, который:
+- изменяет `state/`,
+- валидирует lifecycle,
+- влияет на approve / merge / post-check,
+
+**не может быть запущен** при рассинхроне README.md ↔ код.
+
+### Классификация entrypoints
+
+- **enforcing** — entrypoint **обязан** быть защищён drift guard  
+  (прямо или транзитивно через вызов enforcing-CLI).
+- **read-only** — entrypoint **не имеет права**:
+  - писать в `state/`,
+  - принимать lifecycle-решения,
+  - использоваться как гейт или вердикт.
+  Drift guard для него **не требуется**.
+
+### Явный перечень entrypoints (HARD)
+
+| Entrypoint | Тип | Класс | Пишет `state/` | Drift guard |
+|-----------|-----|-------|----------------|-------------|
+| `python -m scripts.orchestrator decide` | CLI | enforcing | да | обязателен (direct) |
+| `python -m scripts.orchestrator approve` | CLI | enforcing | да | обязателен (direct) |
+| `python -m scripts.orchestrator execute` | CLI | enforcing | да | обязателен (direct) |
+| `python -m scripts.merge_pass2` | CLI | enforcing | да | обязателен (direct) |
+| `python scripts/check_deliverables.py <merge_id>` | CLI | enforcing | нет | обязателен (direct) |
+| `.github/workflows/ci-post-check.yml` | CI | enforcing | да (через CLI) | обязателен (delegated) |
+| `scripts/smoke_test_lifecycle.py` | smoke-test | enforcing | да (через CLI) | обязателен (delegated) |
+| `scripts/smoke_post_check.ps1` | helper | read-only | нет | не требуется |
+| `scripts/view_snapshot.py` | helper | read-only | нет | не требуется |
+| `scripts/gate_snapshot.py` | gate | read-only | нет | не требуется |
+
+### Правило отсутствия серых зон (HARD)
+
+- Любой новый entrypoint, который:
+  - пишет в `state/`, **или**
+  - влияет на lifecycle / approve / merge / post-check,
+
+  **обязан**:
+  1) быть добавлен в этот список,
+  2) быть помечен как `enforcing`,
+  3) иметь drift guard (direct или delegated).
+
+- Любой entrypoint, помеченный как `read-only`,
+  **запрещено** использовать:
+  - в CI,
+  - как гейт,
+  - как сигнал разрешения или запрета lifecycle.
+
+Отсутствие entrypoint в этом списке считается
+**нарушением governance и архитектурного контракта**.
+
 #### `state/snapshots/` — snapshot-артефакты PASS_1
 
 - `*.snapshot.json`
@@ -1305,12 +1363,13 @@ merge в `main` можно выполнить, игнорируя красные
 #### Enforcement-гейты / проверки
 
 - `gate_snapshot.py`
-  - **TYPE:** enforcement
+  - **TYPE:** helper
   - **Lifecycle:** PASS_1 / DECIDE
-  - Роль: структурная проверка `immutable_architecture` в
+  - Роль: read-only структурная проверка `immutable_architecture` в
     `state/snapshots/<snapshot_id>.canonical.json`
     (node_registry, owner_map, hub_chain, linking_matrix_skeleton);
-    не проверяет approve, sha256 и полный lifecycle.
+    не принимает lifecycle-решений, не пишет `state/`
+    и не используется как enforcing-гейт.
 
 - `preflight_pass2.py`
   - **TYPE:** experimental
