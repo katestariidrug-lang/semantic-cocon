@@ -1,0 +1,4 @@
+# Enforce deterministic line endings for drift-guarded contract files
+README.md text eol=lf
+state/architecture/README.sha256 text eol=lf
+.github/workflows/*.yml text eol=lf
