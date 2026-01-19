@@ -1219,6 +1219,8 @@ merge в `main` можно выполнить, игнорируя красные
 | `python -m scripts.orchestrator decide` | CLI | enforcing | да | обязателен (direct) |
 | `python -m scripts.orchestrator approve` | CLI | enforcing | да | обязателен (direct) |
 | `python -m scripts.orchestrator execute` | CLI | enforcing | да | обязателен (direct) |
+| `python -m scripts.audit_entrypoints` | CLI | enforcing | нет | обязателен (direct) |
+| `python -m scripts.llm_cli_bridge` | CLI | enforcing | нет | обязателен (direct) |
 | `python -m scripts.merge_pass2` | CLI | enforcing | да | обязателен (direct) |
 | `python scripts/check_deliverables.py <merge_id>` | CLI | enforcing | нет | обязателен (direct) |
 | `.github/workflows/ci-post-check.yml` | CI | enforcing | да (через CLI) | обязателен (delegated) |
