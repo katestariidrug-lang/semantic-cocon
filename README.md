@@ -1791,6 +1791,8 @@ Pointer `state/merges/by_run/<run_id>.merge_id` сохраняется наме�
 
 Фактически записываются:
 
+- `outputs/pass_1_raw.jsonl`
+
 - `outputs/pass_2/<run_id>/core/`
   - `semantic_enrichment.json`
   - `keywords.json`
@@ -1909,6 +1911,9 @@ Write-matrix является **архитектурным контрактом*
 
 **Разрешено писать ТОЛЬКО:**
 
+- `python -m scripts.orchestrator decide`
+  - `outputs/pass_1_raw.jsonl`
+
 - `python -m scripts.orchestrator execute`
   - `outputs/pass_2/<run_id>/core/`
   - `outputs/pass_2/<run_id>/anchors/`
@@ -1997,4 +2002,5 @@ Write-matrix является **архитектурным контрактом*
   2) быть отражён в этой write-matrix
 
 Иначе entrypoint считается **нелегальным**, даже если код «работает».
+
 
