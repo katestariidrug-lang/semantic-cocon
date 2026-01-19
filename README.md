@@ -43,10 +43,9 @@ README.md является **контрактным артефактом** и и
 #### Каноническая форма fingerprint (HARD)
 
 - Алгоритм: `sha256`.
-- Представление: hex-строка (0-9a-f).
-- **Каноническая форма хранения и вывода: `lowercase` hex.**
+- Представление: hex-строка (0-9, a-f; case-insensitive).
 - Регистр **не является значимым**: enforcement обязан сравнивать fingerprint
-  **case-insensitive** (нормализовать оба значения к lowercase перед сравнением).
+  **case-insensitive** (нормализовать оба значения к одному регистру перед сравнением).
 
 Назначение fingerprint:
 
@@ -372,6 +371,7 @@ Reference enforcement архитектурных контрактов выпол
 
 Следующие проверки считаются обязательными и каноническими:
 
+- `scripts/audit_entrypoints.py` — governance enforcement: детерминированный аудит entrypoints (README ↔ код); любое расхождение = BLOCKER.
 - `scripts/gate_snapshot.py` — структурный гейт snapshot (валидность `immutable_architecture` в canonical snapshot).
 - `scripts/orchestrator.py` — PRE-FLIGHT проверки перед PASS_2 (включая approve + immutability + fingerprints).
 - `scripts/check_deliverables.py` — post-check результатов PASS_2 по `merge_id` (покрытие node_id, валидность anchors).
@@ -1134,10 +1134,12 @@ merge в `main` можно выполнить, игнорируя красные
   - **TYPE:** enforcement
   - **Lifecycle:** end-to-end (DECIDE → APPROVE → EXECUTE → MERGE → POST-CHECK)
   - Роль: GitHub Actions workflow (reference enforcement), который в stub-режиме (`SMOKE_TEST=1`)
-    прогоняет lifecycle до MERGE, получает canonical `merge_id` и запускает
+    сначала выполняет governance-аудит entrypoints:
+    `python -m scripts.audit_entrypoints`,
+    затем прогоняет lifecycle до MERGE, получает canonical `merge_id` и запускает
     `python scripts/check_deliverables.py <merge_id>`.
-    Зелёный CI невозможен без успешного `python scripts/check_deliverables.py <merge_id>`.
-
+    Зелёный CI невозможен без PASS для `python -m scripts.audit_entrypoints`
+    и `python scripts/check_deliverables.py <merge_id>`.
 
 ---
 
@@ -1221,11 +1223,14 @@ merge в `main` можно выполнить, игнорируя красные
 | `python -m scripts.orchestrator execute` | CLI | enforcing | да | обязателен (direct) |
 | `python -m scripts.merge_pass2` | CLI | enforcing | да | обязателен (direct) |
 | `python scripts/check_deliverables.py <merge_id>` | CLI | enforcing | нет | обязателен (direct) |
+| `python -m scripts.audit_entrypoints` | CLI | enforcing | нет | обязателен (direct) |
+| `python -m scripts.llm_cli_bridge` | CLI | enforcing | нет | обязателен (delegated) |
 | `.github/workflows/ci-post-check.yml` | CI | enforcing | да (через CLI) | обязателен (delegated) |
 | `scripts/smoke_test_lifecycle.py` | smoke-test | enforcing | да (через CLI) | обязателен (delegated) |
 | `scripts/smoke_post_check.ps1` | helper | read-only | нет | не требуется |
 | `scripts/view_snapshot.py` | helper | read-only | нет | не требуется |
-| `scripts/gate_snapshot.py` | gate | read-only | нет | не требуется |
+| `scripts/gate_snapshot.py` | helper | read-only | нет | не требуется |
+
 
 ### Правило отсутствия серых зон (HARD)
 
@@ -1372,6 +1377,12 @@ merge в `main` можно выполнить, игнорируя красные
 
 #### Enforcement-гейты / проверки
 
+- `audit_entrypoints.py`
+  - **TYPE:** enforcement
+  - **Lifecycle:** глобально (governance)
+  - Роль: детерминированный аудит entrypoints: сравнивает фактические исполняемые поверхности в репозитории
+    с каноническим списком entrypoints в README.md; любое расхождение = BLOCKER (exit 2).
+
 - `gate_snapshot.py`
   - **TYPE:** helper
   - **Lifecycle:** PASS_1 / DECIDE
@@ -1414,7 +1425,7 @@ merge в `main` можно выполнить, игнорируя красные
   - Роль: canonicalize/hash/load/save для snapshot/состояния.
 
 - `llm_cli_bridge.py`
-  - **TYPE:** helper
+  - **TYPE:** enforcement
   - **Lifecycle:** PASS_1 / PASS_2
   - Роль: единая точка вызова LLM;
     в режиме `SMOKE_TEST=1` работает как детерминированный stub без внешнего провайдера.
@@ -1465,7 +1476,7 @@ scripts/    — кто и что имеет право запускать (CLI �
 ### Файл
 
 ```bash
-python -m scripts.orchestrator
+python -m scripts.orchestrator decide|approve|execute
 ```
 
 ### Режимы работы
@@ -1893,13 +1904,13 @@ Write-matrix является **архитектурным контрактом*
   - `state/merges/`
   - `state/merges/by_run/`
 - CI (`.github/workflows/ci-post-check.yml`)
-  - через enforcing CLI (delegated)
+  - через enforcing CLI (delegated; запись происходит только в workspace раннера, без push/commit в репозиторий)
 
 **СТРОГО ЗАПРЕЩЕНО писать в `state/`:**
 
 - `scripts/view_snapshot.py`
 - `scripts/gate_snapshot.py`
-- любые helper / diagnostic / read-only entrypoints
+- любые helper / diagnostic / read-only entrypoints (даже если они перечислены в governance-списке)
 - любой новый entrypoint, не добавленный в governance-список
 
 ---
@@ -1908,6 +1919,7 @@ Write-matrix является **архитектурным контрактом*
 
 Отдельное правило (HARD):
 - `python scripts/check_deliverables.py <merge_id>` — read-only: **не имеет права писать ни в одну поверхность** (`state/`, `outputs/`, `input/`, `prompts/`, `.github/`, корень).
+- `python -m scripts.audit_entrypoints` — enforcing: **не имеет права писать ни в одну поверхность** (`state/`, `outputs/`, `input/`, `prompts/`, `.github/`, корень).
 
 **Разрешено писать ТОЛЬКО:**
 
