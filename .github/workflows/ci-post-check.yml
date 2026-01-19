@@ -31,6 +31,12 @@ jobs:
             pip install -r requirements.txt
           fi
 
+      - name: Audit entrypoints (enforcement)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m scripts.audit_entrypoints
+
       - name: PASS_1 — DECIDE
         shell: bash
         run: |
