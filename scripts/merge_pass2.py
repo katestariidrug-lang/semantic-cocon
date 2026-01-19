@@ -49,7 +49,7 @@ def enforce_readme_fingerprint_or_blocker() -> tuple[bool, str, dict]:
     mismatch or missing fingerprint file => BLOCKER + FINGERPRINT_MISMATCH
     """
     try:
-        expected = README_FP_PATH.read_text(encoding="utf-8").strip()
+        expected = README_FP_PATH.read_text(encoding="utf-8").strip().lower()
     except Exception as e:
         return (
             False,
@@ -73,8 +73,10 @@ def enforce_readme_fingerprint_or_blocker() -> tuple[bool, str, dict]:
             {"error": str(e), "path": str(README_PATH)},
         )
 
-    actual = hashlib.sha256(data).hexdigest()
+    actual = hashlib.sha256(data).hexdigest().lower()
+
     if actual != expected:
+
         return (
             False,
             "README.md fingerprint mismatch",
