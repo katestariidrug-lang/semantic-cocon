@@ -364,6 +364,13 @@ def preflight_execute_gate(snapshot_path: Path) -> tuple[Dict[str, Any], str, st
     if not hash_hex:
         raise LifecycleViolation(f"SNAPSHOT_INVALID: EMPTY_SHA256_FILE {hash_path}")
 
+    # LIFECYCLE: EXECUTE requires APPROVE (S2_APPROVED)
+    approval_path = approval_file_for_hash(hash_hex)
+    if not approval_path.exists():
+        raise LifecycleViolation(
+            f"LIFECYCLE_VIOLATION: SNAPSHOT_NOT_APPROVED approval_file={approval_path}"
+        )
+
     # STOP-CONDITION: EXECUTE запрещён после MERGE
     # Authoritative source of truth: state/merges/by_run/<task_id>__<hashprefix>.merge_id
     arch_decision = read_json(snapshot_path)

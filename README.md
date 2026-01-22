@@ -367,12 +367,13 @@ Reference enforcement архитектурных контрактов выпол
 
 Любое изменение соглашения о проверках считается архитектурным изменением и требует пересмотра проекта.
 
-#### Канонические файлы проверок
+#### Канонические файлы инструментов контроля
 
-Следующие проверки считаются обязательными и каноническими:
+Следующие инструменты считаются каноническими (их наличие/роль зафиксированы),
+но **не все** из них являются обязательными гейтами:
 
 - `scripts/audit_entrypoints.py` — governance enforcement: детерминированный аудит entrypoints (README ↔ код); любое расхождение = BLOCKER.
-- `scripts/gate_snapshot.py` — структурный гейт snapshot (валидность `immutable_architecture` в canonical snapshot).
+- `scripts/gate_snapshot.py` — read-only структурная проверка snapshot (валидность `immutable_architecture` в canonical snapshot).
 - `scripts/orchestrator.py` — PRE-FLIGHT проверки перед PASS_2 (включая approve + immutability + fingerprints).
 - `scripts/check_deliverables.py` — post-check результатов PASS_2 по `merge_id` (покрытие node_id, валидность anchors).
 
@@ -482,7 +483,48 @@ DECIDE
 
 ```
 
-### Описание состояний и ограничений
+### Формальная модель переходов (FSM, HARD)
+
+Lifecycle фиксируется как конечный автомат.
+Текущее состояние определяется только по наблюдаемым артефактам на диске
+(state/*, outputs/*), без догадок и памяти процесса.
+
+| State (наблюдаемый)   | Доказательство (факт на диске)                                                         | Комментарий                                               |
+| --------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `S0_NO_SNAPSHOT`      | в `state/snapshots/` отсутствуют файлы `*.snapshot.json`                               | DECIDE ещё не зафиксирован как snapshot                   |
+| `S1_SNAPSHOT_READY`   | существуют `state/snapshots/<snapshot_id>.snapshot.json`, `state/snapshots/<snapshot_id>.canonical.json`, `state/snapshots/<snapshot_id>.sha256` | snapshot существует, но ещё не approved |
+| `S2_APPROVED`         | существует `state/approvals/<sha256>.approved` для данного snapshot                    | point of no return: snapshot immutable                    |
+| `S3_EXECUTED_CORE`    | существует `outputs/pass_2/<run_id>/core/` с deliverables                              | stage CORE выполнен (для данного run_id)                  |
+| `S4_EXECUTED_ANCHORS` | существует `outputs/pass_2/<run_id>/anchors/` с deliverables                           | stage ANCHORS выполнен (для данного run_id)               |
+| `S5_READY_TO_MERGE`   | выполнены `S3` и `S4` для одного approved snapshot (совпадает `immutable_fingerprint`) | разрешён MERGE                                            |
+| `S6_MERGED`           | существует `state/merges/<merge_id>.json` и `state/merges/by_run/<run_id>.merge_id`    | терминальное состояние lifecycle для данного snapshot/run |
+
+### Разрешённые переходы (FSM, HARD)
+
+Любая команда, вызванная вне разрешённого состояния,
+**обязана завершаться** `[BLOCKER] LIFECYCLE_VIOLATION: ...` (exit code 2).
+
+| From state | Команда (trigger) | To state | Минимальные условия (должны быть проверены кодом) |
+|---|---|---|---|
+| `S0_NO_SNAPSHOT` или любое | `python -m scripts.orchestrator decide` | `S1_SNAPSHOT_READY` | создаётся snapshot; drift guard OK |
+| `S1_SNAPSHOT_READY` | `python -m scripts.orchestrator approve --snapshot <snapshot_id>` | `S2_APPROVED` | snapshot валиден; создаётся approval для `<sha256>` |
+| `S2_APPROVED` | `python -m scripts.orchestrator execute --stage core --snapshot ...` | `S3_EXECUTED_CORE` | PRE-FLIGHT OK; запрет перезаписи без `--force` |
+| `S2_APPROVED` | `python -m scripts.orchestrator execute --stage anchors --snapshot ...` | `S4_EXECUTED_ANCHORS` | PRE-FLIGHT OK; запрет перезаписи без `--force` |
+| `S5_READY_TO_MERGE` | `python -m scripts.merge_pass2 --core-snapshot-id <run_id> --anchors-snapshot-id <run_id>` | `S6_MERGED` | stage-level invariants; повторный MERGE = BLOCKER |
+| `S6_MERGED` | `python scripts/check_deliverables.py <merge_id>` | (остаётся `S6_MERGED`) | post-check читает ТОЛЬКО merge-state; не пишет никуда |
+
+### Запреты (FSM, HARD)
+
+- Пропуск состояния запрещён: нельзя выполнить `approve` без `S1`, нельзя `execute` без `S2`, нельзя `merge` без `S3` и `S4`.
+- Повторение запрещено, если оно меняет смысл состояния:
+  - повторный `MERGE` для того же `merge_id` = BLOCKER;
+  - `EXECUTE` после `S6_MERGED` = BLOCKER (`EXECUTE_AFTER_MERGE`).
+- Post-check:
+  - запрещён до `S6_MERGED`;
+  - разрешён только по `merge_id`;
+  - не является переходом состояния.
+
+### Человеческие названия стадий (mapping к FSM, не отдельная модель)
 
 | Состояние | Source of truth | Разрешено | Запрещено |
 |----------|----------------|-----------|-----------|
@@ -509,19 +551,20 @@ DECIDE
 - EXECUTE (CORE/ANCHORS) запрещён после MERGE для данного snapshot и данного merge_id, включая попытки запуска с флагом `--force`.
 - MERGE запрещён, если immutable_fingerprint (и prompts fingerprints) не совпадают между snapshot и текущим окружением.
 
-> Примечание: определения состояний см. в таблице «Описание состояний и ограничений» выше.
+> Примечание: определения состояний см. в таблице FSM «State (наблюдаемый) / Доказательство (факт на диске)» выше.
 
 ### Соответствие CLI-команд состояниям lifecycle
 
-| Команда | Допустимое состояние | Проверяется | Поведение при нарушении |
-|-------|---------------------|-------------|--------------------------|
-| `python -m scripts.orchestrator decide` | DECIDE | — | BLOCKER |
-| `python -m scripts.orchestrator execute --stage core` | APPROVE | approve + snapshot immutability | BLOCKER |
-| `python -m scripts.orchestrator execute --stage anchors` | APPROVE | approve + snapshot immutability | BLOCKER |
-| `python -m scripts.merge_pass2` | EXECUTE (CORE + ANCHORS завершены) | merge-state terminal + immutable_fingerprint | BLOCKER |
-| `python scripts/check_deliverables.py <merge_id>` | MERGE | merge-state | BLOCKER |
-| Любой `execute` после MERGE | ❌ запрещено | merge-state | BLOCKER (STOP-condition) |
-| `view_snapshot.py` | ❌ не является состоянием lifecycle | — | Никогда не используется как гейт |
+| Команда | Допустимое состояние (FSM) | Проверяется | Поведение при нарушении |
+|-------|-----------------------------|-------------|--------------------------|
+| `python -m scripts.orchestrator decide` | `S0_NO_SNAPSHOT` или любое | — | — |
+| `python -m scripts.orchestrator approve --snapshot <snapshot_id>` | `S1_SNAPSHOT_READY` | snapshot валиден; approval для `<sha256>` | BLOCKER |
+| `python -m scripts.orchestrator execute --stage core --snapshot ...` | `S2_APPROVED` | approve + immutability + fingerprints | BLOCKER |
+| `python -m scripts.orchestrator execute --stage anchors --snapshot ...` | `S2_APPROVED` | approve + immutability + fingerprints | BLOCKER |
+| `python -m scripts.merge_pass2 ...` | `S5_READY_TO_MERGE` | invariants + immutable_fingerprint | BLOCKER |
+| `python scripts/check_deliverables.py <merge_id>` | `S6_MERGED` | merge-state | BLOCKER |
+| Любой `execute` после `S6_MERGED` | ❌ запрещено | merge-state | BLOCKER (STOP-condition) |
+| `view_snapshot.py` | helper (read-only), не state | — | Никогда не используется как гейт |
 
 Команды, вызванные вне допустимого состояния lifecycle,  
 **обязаны завершаться ошибкой**, а не выполнять частичное действие.
@@ -1231,7 +1274,6 @@ merge в `main` можно выполнить, игнорируя красные
 | `scripts/view_snapshot.py` | helper | read-only | нет | не требуется |
 | `scripts/gate_snapshot.py` | helper | read-only | нет | не требуется |
 
-
 ### Правило отсутствия серых зон (HARD)
 
 - Любой новый entrypoint, который:
@@ -1401,9 +1443,9 @@ merge в `main` можно выполнить, игнорируя красные
 #### Lifecycle / модели состояния
 
 - `lifecycle.py`
-  - **TYPE:** canonical
+  - **TYPE:** enforcement
   - **Lifecycle:** глобально
-  - Роль: формальное определение lifecycle-состояний и enforcement STOP-condition
+  - Роль: enforcement lifecycle-инвариантов и STOP-condition согласно README.md
     (EXECUTE запрещён после MERGE).
 
 #### Smoke-test / smoke-инструменты
@@ -1518,7 +1560,7 @@ python -m scripts.orchestrator approve --snapshot <snapshot_id>
 python scripts/view_snapshot.py <snapshot_id>
 # где <snapshot_id> = имя файла без суффикса .canonical.json
 
-# (внутренний) структурный гейт snapshot выполняется orchestrator'ом как часть PRE-FLIGHT
+# (внутренний) read-only структурная проверка snapshot выполняется orchestrator'ом как часть PRE-FLIGHT
 # пользователь НЕ запускает gate_snapshot вручную
 
 # APPROVE — человеческий шаг (механизирован, но не автоматизирован)
