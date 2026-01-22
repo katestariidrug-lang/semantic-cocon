@@ -1687,6 +1687,33 @@ STOP-2: Правка переносит контроль внутрь LLM
 STOP-3: Правка расширяет смысл PASS_2
 (новые сущности, новые темы через enrichment / questions / keywords )
 
+## Orchestrator PRE-FLIGHT (audit, read-only)
+
+Этот раздел фиксирует **фактические PRE-FLIGHT проверки** в `scripts/orchestrator.py`
+(наблюдаемое поведение кода, без интерпретаций и без “улучшений”).
+
+### Global PRE-FLIGHT (applies to all orchestrator commands)
+
+| CLI | PRE-FLIGHT проверка | Где реализована | Какой инвариант защищает |
+|---|---|---|---|
+| all | README fingerprint enforcement (drift-guard) | `main()` → `enforce_readme_fingerprint_or_blocker()` | README.md — единственный источник архитектурной истины |
+| all | BLOCKER при fingerprint mismatch | exit code `2` при `FINGERPRINT_MISMATCH` | Запрет выполнения при drift |
+
+### PRE-FLIGHT проверки по командам orchestrator
+
+| CLI | PRE-FLIGHT проверка | Где реализована | Какой lifecycle-инвариант защищает |
+|---|---|---|---|
+| decide | existence входных файлов (I/O fail-fast) | `read_json(...)`, `read_text(...)` | I/O fail-fast; lifecycle не enforced |
+| approve | existence `<snapshot>.sha256` | `cmd_approve()` → `hash_path.exists()` | snapshot identity обязана существовать |
+| approve | sha256 файл не пуст | `cmd_approve()` → `read_sha256_file()` | approve завязан на hash |
+| approve | idempotency approve | `cmd_approve()` → `if approval_path.exists(): PASS` | повторный approve безопасен |
+| approve | **snapshot validation отсутствует** | *явно зафиксировано в docstring `cmd_approve()`* | lifecycle enforcement отсутствует на approve |
+| execute | approval обязателен | `preflight_execute_gate()` → `state/approvals/<sha256>.approved` | EXECUTE requires APPROVE (S2_APPROVED) |
+| execute | STOP-condition: execute запрещён после merge | `preflight_execute_gate()` → pointer `state/merges/by_run/<run_id>.merge_id` | STOP после MERGE |
+| execute | immutability + prompt fingerprints + immutable_fingerprint | `preflight_execute_gate()` | immutability enforcement |
+| execute | task binding (`task_id` snapshot == `input/task.json`) | `cmd_execute()` | связка snapshot ↔ входная задача |
+| execute | запрет перезаписи outputs без `--force` | `cmd_execute()` | не смешивать прогоны |
+
 ## PRE-FLIGHT gate перед PASS_2 (каноническое резюме)
 
 Этот раздел является кратким каноническим резюме PRE-FLIGHT gate.
