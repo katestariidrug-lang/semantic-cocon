@@ -88,6 +88,17 @@ def _expect_blocker(r: StepResult, step_name: str) -> None:
         _die("\n".join(details))
 
 
+def _expect_fail(r: StepResult, step_name: str) -> None:
+    if r.rc != 1 or r.level != "FAIL":
+        details = []
+        details.append(f"Step `{step_name}` expected FAIL/1, got {r.level}/{r.rc}.")
+        details.append(f"First line: [{r.level}] {r.code}: {r.message}")
+        if r.out:
+            details.append("STDOUT:\n" + r.out)
+        if r.err:
+            details.append("STDERR:\n" + r.err)
+        _die("\n".join(details))
+
 def _extract_snapshot_id_from_output(text: str) -> Optional[str]:
     # We try to be resilient to exact message wording:
     # Look for common tokens like `snapshot_id = ...` or `snapshot_id=...`
@@ -179,14 +190,42 @@ def main() -> int:
         if not snapshot_path.exists():
             _die(f"Snapshot file not found after decide: {snapshot_path}")
 
-        # 2) approve
+        # 2) execute before approve -> BLOCKER
+        r_exec_before_approve = _run(
+            [
+                sys.executable,
+                "-m",
+                "scripts.orchestrator",
+                "execute",
+                "--stage",
+                "core",
+                "--snapshot",
+                str(snapshot_path.as_posix()),
+            ],
+            cwd=repo_root,
+        )
+        _expect_blocker(r_exec_before_approve, "execute-before-approve")
+
+        # 3) approve without snapshot -> BLOCKER (guaranteed missing snapshot_id)
+        missing_snapshot_id = f"missing__{int(time.time())}__00000000"
+        missing_snapshot_path = repo_root / "state" / "snapshots" / f"{missing_snapshot_id}.sha256"
+        if missing_snapshot_path.exists():
+            _die(f"Test invariant broken: expected missing snapshot file not to exist: {missing_snapshot_path}")
+
+        r_approve_missing = _run(
+            [sys.executable, "-m", "scripts.orchestrator", "approve", "--snapshot", missing_snapshot_id],
+            cwd=repo_root,
+        )
+        _expect_fail(r_approve_missing, "approve-missing-snapshot")
+
+        # 4) approve (valid)
         r_approve = _run(
             [sys.executable, "-m", "scripts.orchestrator", "approve", "--snapshot", snapshot_id],
             cwd=repo_root,
         )
         _expect_pass(r_approve, "approve")
 
-        # 3) execute (CORE)
+        # 5) execute (CORE)
         r_core = _run(
             [
                 sys.executable,
@@ -202,7 +241,7 @@ def main() -> int:
         )
         _expect_pass(r_core, "execute/core")
 
-        # 4) execute (ANCHORS)
+        # 5) execute (ANCHORS)
         r_anchors = _run(
             [
                 sys.executable,
@@ -218,19 +257,19 @@ def main() -> int:
         )
         _expect_pass(r_anchors, "execute/anchors")
 
-        # 4b) post-check ДО MERGE запрещён (попытка по snapshot_id) -> BLOCKER
+        # 6) post-check ДО MERGE запрещён (попытка по snapshot_id) -> BLOCKER
         r_post_before_merge = _run(
             [sys.executable, "scripts/check_deliverables.py", snapshot_id], cwd=repo_root
         )
         _expect_blocker(r_post_before_merge, "post-check-before-merge")
 
-        # 4c) post-check по task_id запрещён -> BLOCKER
+        # 7) post-check по task_id запрещён -> BLOCKER
         r_post_by_task_id = _run(
             [sys.executable, "scripts/check_deliverables.py", unique_task_id], cwd=repo_root
         )
         _expect_blocker(r_post_by_task_id, "post-check-by-task-id")
 
-        # 5) merge
+        # 8) merge
         merge_files_before = _list_merge_id_files(merges_by_run)
 
         r_merge = _run(
@@ -250,16 +289,16 @@ def main() -> int:
         # Read merge_id created by THIS merge (robust vs parallel runs / stale state).
         merge_id = _read_new_merge_id(merges_by_run, merge_files_before)
 
-        # 6) post-check без merge_id запрещён -> BLOCKER
+        # 9) post-check без merge_id запрещён -> BLOCKER
         r_post_missing_merge_id = _run([sys.executable, "scripts/check_deliverables.py"], cwd=repo_root)
         _expect_blocker(r_post_missing_merge_id, "post-check-missing-merge-id")
 
-        # 7) post-check (корректный запуск по merge_id) -> PASS
+        # 10) post-check (корректный запуск по merge_id) -> PASS
         r_post = _run([sys.executable, "scripts/check_deliverables.py", merge_id], cwd=repo_root)
         _expect_pass(r_post, "post-check")
 
 
-        # 7) повторный execute → BLOCKER (STOP-condition)
+        # 11) повторный execute → BLOCKER (STOP-condition)
         r_forbidden = _run(
             [
                 sys.executable,
