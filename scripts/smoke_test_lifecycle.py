@@ -218,12 +218,41 @@ def main() -> int:
         )
         _expect_fail(r_approve_missing, "approve-missing-snapshot")
 
-        # 4) approve (valid)
-        r_approve = _run(
-            [sys.executable, "-m", "scripts.orchestrator", "approve", "--snapshot", snapshot_id],
-            cwd=repo_root,
-        )
-        _expect_pass(r_approve, "approve")
+        # 4) smoke-proof: APPROVE is intentionally weak (no snapshot validation),
+        # and snapshot invariants are enforced on PRE-FLIGHT before EXECUTE.
+        #
+        # We make the snapshot file obviously invalid, then:
+        #   - approve MUST still PASS (weak gate)
+        #   - execute MUST BLOCKER/2 on PRE-FLIGHT (hard gate)
+        # Then we restore the snapshot file and continue the normal lifecycle smoke.
+        original_snapshot_text = snapshot_path.read_text(encoding="utf-8")
+
+        try:
+            # Make snapshot.json invalid in a deterministic way (invalid JSON).
+            snapshot_path.write_text("{", encoding="utf-8")
+
+            r_approve = _run(
+                [sys.executable, "-m", "scripts.orchestrator", "approve", "--snapshot", snapshot_id],
+                cwd=repo_root,
+            )
+            _expect_pass(r_approve, "approve-weak-on-invalid-snapshot")
+
+            r_exec_invalid_snapshot = _run(
+                [
+                    sys.executable,
+                    "-m",
+                    "scripts.orchestrator",
+                    "execute",
+                    "--stage",
+                    "core",
+                    "--snapshot",
+                    str(snapshot_path.as_posix()),
+                ],
+                cwd=repo_root,
+            )
+            _expect_blocker(r_exec_invalid_snapshot, "execute-preflight-invalid-snapshot")
+        finally:
+            snapshot_path.write_text(original_snapshot_text, encoding="utf-8")
 
         # 5) execute (CORE)
         r_core = _run(
