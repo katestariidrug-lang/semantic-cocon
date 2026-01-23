@@ -1279,7 +1279,6 @@ merge в `main` можно выполнить, игнорируя красные
 | `python -m scripts.llm_cli_bridge` | CLI | enforcing | нет | обязателен (delegated) |
 | `.github/workflows/ci-post-check.yml` | CI | enforcing | да (через CLI) | обязателен (delegated) |
 | `scripts/smoke_test_lifecycle.py` | smoke-test | enforcing | да (через CLI) | обязателен (delegated) |
-| `python -m scripts.tui` | TUI | enforcing | да (через CLI) | обязателен (delegated) |
 | `scripts/smoke_post_check.ps1` | helper | read-only | нет | не требуется |
 | `scripts/view_snapshot.py` | helper | read-only | нет | не требуется |
 | `scripts/gate_snapshot.py` | gate | read-only | нет | не требуется |
