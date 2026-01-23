@@ -507,7 +507,7 @@ Lifecycle фиксируется как конечный автомат.
 | From state | Команда (trigger) | To state | Минимальные условия (должны быть проверены кодом) |
 |---|---|---|---|
 | `S0_NO_SNAPSHOT` или любое | `python -m scripts.orchestrator decide` | `S1_SNAPSHOT_READY` | создаётся snapshot; drift guard OK |
-| `S1_SNAPSHOT_READY` | `python -m scripts.orchestrator approve --snapshot <snapshot_id>` | `S2_APPROVED` | snapshot валиден; создаётся approval для `<sha256>` |
+| `S1_SNAPSHOT_READY` | `python -m scripts.orchestrator approve --snapshot <snapshot_id>` | `S2_APPROVED` | snapshot идентифицирован (`.sha256`); создаётся approval для `<sha256>` |
 | `S2_APPROVED` | `python -m scripts.orchestrator execute --stage core --snapshot ...` | `S3_EXECUTED_CORE` | PRE-FLIGHT OK; запрет перезаписи без `--force` |
 | `S2_APPROVED` | `python -m scripts.orchestrator execute --stage anchors --snapshot ...` | `S4_EXECUTED_ANCHORS` | PRE-FLIGHT OK; запрет перезаписи без `--force` |
 | `S5_READY_TO_MERGE` | `python -m scripts.merge_pass2 --core-snapshot-id <run_id> --anchors-snapshot-id <run_id>` | `S6_MERGED` | stage-level invariants; повторный MERGE = BLOCKER |
@@ -558,7 +558,7 @@ Lifecycle фиксируется как конечный автомат.
 | Команда | Допустимое состояние (FSM) | Проверяется | Поведение при нарушении |
 |-------|-----------------------------|-------------|--------------------------|
 | `python -m scripts.orchestrator decide` | `S0_NO_SNAPSHOT` или любое | — | — |
-| `python -m scripts.orchestrator approve --snapshot <snapshot_id>` | `S1_SNAPSHOT_READY` | snapshot валиден; approval для `<sha256>` | BLOCKER |
+| `python -m scripts.orchestrator approve --snapshot <snapshot_id>` | `S1_SNAPSHOT_READY` | snapshot идентифицирован (`.sha256`); approval для `<sha256>` | BLOCKER |
 | `python -m scripts.orchestrator execute --stage core --snapshot ...` | `S2_APPROVED` | approve + immutability + fingerprints | BLOCKER |
 | `python -m scripts.orchestrator execute --stage anchors --snapshot ...` | `S2_APPROVED` | approve + immutability + fingerprints | BLOCKER |
 | `python -m scripts.merge_pass2 ...` | `S5_READY_TO_MERGE` | invariants + immutable_fingerprint | BLOCKER |
@@ -869,6 +869,13 @@ Snapshot считается валидным **только в связке с �
 ---
 
 ## APPROVE (человеческий шаг)
+
+Важно: команда `approve` **НЕ выполняет валидацию snapshot**
+(структурную, canonical или sha256-consistency).
+Она механизирует человеческое решение и фиксирует точку невозврата.
+
+Валидация snapshot и enforcement корректности выполняются
+**исключительно на этапе PRE-FLIGHT перед EXECUTE**.
 
 Snapshot **запрещено исполнять без APPROVE**.
 Отсутствие approval-файла является безусловным основанием для отказа запуска PASS_2.
@@ -1274,7 +1281,7 @@ merge в `main` можно выполнить, игнорируя красные
 | `scripts/smoke_test_lifecycle.py` | smoke-test | enforcing | да (через CLI) | обязателен (delegated) |
 | `scripts/smoke_post_check.ps1` | helper | read-only | нет | не требуется |
 | `scripts/view_snapshot.py` | helper | read-only | нет | не требуется |
-| `scripts/gate_snapshot.py` | helper | read-only | нет | не требуется |
+| `scripts/gate_snapshot.py` | gate | read-only | нет | не требуется |
 
 ### Правило отсутствия серых зон (HARD)
 
@@ -1482,6 +1489,15 @@ merge в `main` можно выполнить, игнорируя красные
   - Роль: read-only просмотр структуры canonical snapshot для ручной проверки;
     читает только `state/snapshots/<snapshot_id>.canonical.json`;
     не интерпретирует данные, не агрегирует и не создаёт состояние.
+
+- `tui.py`
+  - **TYPE:** helper
+  - **Lifecycle:** локальный helper-entrypoint (UI)
+  - Роль: Textual TUI как thin-wrapper над публичными CLI проекта.
+    Запускает команды через subprocess, показывает stdout/stderr/exit code,
+    читает состояние только из `state/` для отображения статуса.
+    Запрещено: бизнес-логика, прямые записи в `state/`, обход enforcement-гейтов,
+    альтернативный state или “умные решения” в UI.
 
 #### Служебное
 
