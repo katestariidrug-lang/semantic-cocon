@@ -1289,6 +1289,35 @@ merge в `main` можно выполнить, игнорируя красные
 | `scripts/view_snapshot.py` | helper | read-only | нет | не требуется |
 | `scripts/gate_snapshot.py` | gate | read-only | нет | не требуется |
 
+---
+
+### Подтверждение read-only статуса (audit-proof)
+
+Следующие entrypoints **фактически проверены по коду**
+и подтверждены как не имеющие write-side-effects
+(не создают файлов, не изменяют существующие,
+не пишут в `state/`, `outputs/`, `approvals/`
+и не влияют на lifecycle или merge-state):
+
+| Entrypoint | Проверка | Фактическое поведение |
+|-----------|---------|----------------------|
+| `scripts/view_snapshot.py` | анализ кода | читает `state/snapshots/<id>.canonical.json` через `Path.read_text`; операции записи отсутствуют |
+| `scripts/gate_snapshot.py` | анализ кода | открывает snapshot **только** в режиме `open(..., "r")`; выполняет структурную валидацию и `sys.exit`; записи отсутствуют |
+| `scripts/smoke_post_check.ps1` | анализ скрипта | вызывает `check_deliverables.py`; не содержит PowerShell-команд записи (`New-Item`, `Set-Content`, `Out-File` и т.п.) |
+
+**Вывод (зафиксированный факт):**
+
+- read-only entrypoints не имеют скрытых side-effects;
+- не используются как enforcement-гейты;
+- соответствуют своему статусу в governance-таблице.
+
+Любое изменение их поведения,
+добавляющее запись или влияние на lifecycle,
+**обязано**:
+- изменить их статус на `enforcing`,
+- быть отражено в README.md,
+- пройти audit_entrypoints и CI.
+
 ### Правило отсутствия серых зон (HARD)
 
 - Любой новый entrypoint, который:
