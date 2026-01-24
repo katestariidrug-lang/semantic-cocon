@@ -26,5 +26,5 @@ Assert-ExitCode 2
 python scripts\check_deliverables.py DOES_NOT_EXIST
 Assert-ExitCode 2
 
-Write-Host "[PASS] DELIVERABLES_CHECK_FAILED: smoke_post_check OK"
+Write-Host "[PASS] OK: smoke_post_check OK"
 exit 0
