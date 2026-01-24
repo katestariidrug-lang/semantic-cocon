@@ -1292,6 +1292,11 @@ merge в `main` можно выполнить, игнорируя красные
 
 ### Явный перечень entrypoints (HARD)
 
+**Определения (контрактные):**
+- **direct** — entrypoint **сам** выполняет drift guard (enforce README fingerprint) в своём коде.
+- **delegated** — entrypoint **не содержит** drift guard, но вызывает enforcing-CLI,
+  в котором drift guard выполняется гарантированно до любых side-effects.
+
 | Entrypoint | Тип | Класс | Пишет `state/` | Drift guard |
 |-----------|-----|-------|----------------|-------------|
 | `python -m scripts.orchestrator decide` | CLI | enforcing | да | обязателен (direct) |
@@ -1301,11 +1306,11 @@ merge в `main` можно выполнить, игнорируя красные
 | `python -m scripts.llm_cli_bridge` | CLI | enforcing | нет | обязателен (direct) |
 | `python -m scripts.merge_pass2` | CLI | enforcing | да | обязателен (direct) |
 | `python scripts/check_deliverables.py <merge_id>` | CLI | enforcing | нет | обязателен (direct) |
-| `.github/workflows/ci-post-check.yml` | CI | enforcing | да (через CLI) | обязателен (delegated) |
-| `scripts/smoke_test_lifecycle.py` | smoke-test | enforcing | да (через CLI) | обязателен (delegated) |
+| `.github/workflows/ci-post-check.yml` | CI | enforcing | да (через enforcing CLI) | обязателен (delegated) |
+| `scripts/smoke_test_lifecycle.py` | smoke-test | enforcing | нет (сам); инициирует запись через enforcing CLI | обязателен (delegated) |
 | `scripts/smoke_post_check.ps1` | helper | read-only | нет | не требуется |
 | `scripts/view_snapshot.py` | helper | read-only | нет | не требуется |
-| `scripts/gate_snapshot.py` | gate | read-only | нет | не требуется |
+| `scripts/gate_snapshot.py` | helper | read-only | нет | не требуется |
 
 ---
 
