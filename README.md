@@ -410,40 +410,43 @@ Reference enforcement архитектурных контрактов выпол
 Следующий список ERROR_CODE является **конечным и обязательным**
 для всех enforcement CLI-гейтов проекта.
 
+Важно:
+- любые упоминания кодоподобных идентификаторов (`UPPER_SNAKE_CASE`)
+  в других разделах README.md **не являются ERROR_CODE**,
+  если они не перечислены в списке ниже;
+- такие упоминания носят описательный характер
+  и не расширяют канонический список.
+
 Использование ERROR_CODE, **не перечисленного ниже**,
 считается **архитектурным нарушением**.
 
-### BLOCKER — нарушение архитектуры или lifecycle (exit code 2)
+### BLOCKER — нарушение архитектуры, lifecycle или обязательного состояния (exit code 2)
 
-Используются **только** для ситуаций, при которых
-дальнейшее выполнение pipeline недопустимо.
+Используются **только** в ситуациях, когда:
+- нарушен архитектурный контракт README.md,
+- нарушен lifecycle (порядок состояний),
+- отсутствует или повреждено обязательное canonical-состояние (`state/*`),
+и **дальнейшее выполнение pipeline недопустимо принципиально**, а не из-за качества данных.
 
 ```text
-LIFECYCLE_VIOLATION
-INVALID_LIFECYCLE_STATE
-EXECUTE_AFTER_MERGE
-APPROVE_MISSING
-SNAPSHOT_INVALID
-SNAPSHOT_IMMUTABLE_VIOLATION
-FINGERPRINT_MISMATCH
-TASK_ID_MISMATCH
-MERGE_STATE_EXISTS
-MERGE_STATE_INVALID
-MERGE_FINGERPRINT_MISMATCH
+LIFECYCLE_VIOLATION      # вызов команды вне допустимого состояния lifecycle
+MERGE_STATE_INVALID     # отсутствие / повреждение canonical merge-state
+SNAPSHOT_INVALID        # отсутствие / повреждение canonical snapshot
+FINGERPRINT_MISMATCH    # drift README.md ↔ enforcement-код
 ```
 
 ### FAIL — некорректные данные или результаты (exit code 1)
 
-Используются, когда lifecycle корректен,
-но входные данные или deliverables невалидны.
+Используются **только если lifecycle и обязательные состояния валидны**,
+но входные данные, deliverables или runtime-операции
+(например, чтение файлов deliverables)
+не позволяют успешно завершить проверку.
 
 ```text
 DELIVERABLES_CHECK_FAILED
 NODE_COVERAGE_INCOMPLETE
 ANCHORS_INVALID
-OUTPUT_DIR_EXISTS
-INVALID_ARGUMENT
-IO_ERROR
+IO_ERROR                # I/O ошибка при работе с deliverables, НЕ с lifecycle-state
 ```
 
 ### PASS (exit code 0)
@@ -454,6 +457,21 @@ OK
 
 ### Обязательные правила использования ERROR_CODE
 
+Классификация ошибок является частью архитектурного контракта:
+
+- если ошибка связана с lifecycle, порядком состояний или canonical-state (`state/*`) → **BLOCKER**;
+- если lifecycle корректен, но данные или deliverables невалидны → **FAIL**;
+- если контракт README.md нарушен → **BLOCKER** независимо от контекста выполнения.
+
+Правило интерпретации README.md:
+
+- ERROR_CODE существует **только** если он перечислен
+  в разделе `Canonical ERROR_CODE (enforced)`;
+- наличие идентификатора вида `UPPER_SNAKE_CASE`
+  в примерах, таблицах lifecycle или описательных разделах
+  **не означает**, что он является допустимым ERROR_CODE;
+- код проекта **обязан** использовать
+  только ERROR_CODE из канонического списка.
 - Каждый `ERROR_CODE` жёстко привязан к одному уровню (`PASS`, `FAIL` или `BLOCKER`).
 - Один и тот же `ERROR_CODE` не может использоваться
   с разными уровнями в разных CLI-инструментах.
@@ -518,7 +536,7 @@ Lifecycle фиксируется как конечный автомат.
 - Пропуск состояния запрещён: нельзя выполнить `approve` без `S1`, нельзя `execute` без `S2`, нельзя `merge` без `S3` и `S4`.
 - Повторение запрещено, если оно меняет смысл состояния:
   - повторный `MERGE` для того же `merge_id` = BLOCKER;
-  - `EXECUTE` после `S6_MERGED` = BLOCKER (`EXECUTE_AFTER_MERGE`).
+  - `EXECUTE` после `S6_MERGED` = BLOCKER (`LIFECYCLE_VIOLATION`).
 - Post-check:
   - запрещён до `S6_MERGED`;
   - разрешён только по `merge_id`;
@@ -1288,6 +1306,35 @@ merge в `main` можно выполнить, игнорируя красные
 | `scripts/smoke_post_check.ps1` | helper | read-only | нет | не требуется |
 | `scripts/view_snapshot.py` | helper | read-only | нет | не требуется |
 | `scripts/gate_snapshot.py` | gate | read-only | нет | не требуется |
+
+---
+
+### Подтверждение read-only статуса (audit-proof)
+
+Следующие entrypoints **фактически проверены по коду**
+и подтверждены как не имеющие write-side-effects
+(не создают файлов, не изменяют существующие,
+не пишут в `state/`, `outputs/`, `approvals/`
+и не влияют на lifecycle или merge-state):
+
+| Entrypoint | Проверка | Фактическое поведение |
+|-----------|---------|----------------------|
+| `scripts/view_snapshot.py` | анализ кода | читает `state/snapshots/<id>.canonical.json` через `Path.read_text`; операции записи отсутствуют |
+| `scripts/gate_snapshot.py` | анализ кода | открывает snapshot **только** в режиме `open(..., "r")`; выполняет структурную валидацию и `sys.exit`; записи отсутствуют |
+| `scripts/smoke_post_check.ps1` | анализ скрипта | вызывает `check_deliverables.py`; не содержит PowerShell-команд записи (`New-Item`, `Set-Content`, `Out-File` и т.п.) |
+
+**Вывод (зафиксированный факт):**
+
+- read-only entrypoints не имеют скрытых side-effects;
+- не используются как enforcement-гейты;
+- соответствуют своему статусу в governance-таблице.
+
+Любое изменение их поведения,
+добавляющее запись или влияние на lifecycle,
+**обязано**:
+- изменить их статус на `enforcing`,
+- быть отражено в README.md,
+- пройти audit_entrypoints и CI.
 
 ### Правило отсутствия серых зон (HARD)
 

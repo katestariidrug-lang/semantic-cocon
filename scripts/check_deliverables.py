@@ -59,7 +59,7 @@ class Reporter:
             # If someone uses a non-canonical code, that's a contract breach.
             self.findings.append(Finding(
                 level=LEVEL_BLOCKER,
-                code="DELIVERABLES_CHECK_FAILED",
+                code="LIFECYCLE_VIOLATION",
                 message=f"Unknown error code used: {code}",
                 evidence={"bad_code": code},
             ))
@@ -289,7 +289,7 @@ def main() -> int:
     anchors_s = (anch_art.get("anchors_path") or "").strip()
 
     if not all([core_sem_s, core_kw_s, core_q_s, anchors_s]):
-        r.fail(
+        r.blocker(
             "MERGE_STATE_INVALID",
             "merge-state missing required artifacts paths",
             evidence={
