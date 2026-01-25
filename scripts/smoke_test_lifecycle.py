@@ -326,6 +326,28 @@ def main() -> int:
         r_post = _run([sys.executable, "scripts/check_deliverables.py", merge_id], cwd=repo_root)
         _expect_pass(r_post, "post-check")
 
+        # 10a) post-check при повреждённом merge-state -> BLOCKER
+        merge_state_path = repo_root / "state" / "merges" / f"{merge_id}.json"
+        if not merge_state_path.exists():
+            _die(f"Missing merge-state file for smoke test: {merge_state_path}")
+
+        original_merge_state = merge_state_path.read_text(encoding="utf-8")
+        try:
+            # Deterministically corrupt merge-state (invalid JSON)
+            merge_state_path.write_text("{", encoding="utf-8")
+
+            r_post_invalid_merge = _run(
+                [sys.executable, "scripts/check_deliverables.py", merge_id],
+                cwd=repo_root,
+            )
+            _expect_blocker(r_post_invalid_merge, "post-check-invalid-merge-state")
+            if r_post_invalid_merge.code != "MERGE_STATE_INVALID":
+                _die(
+                    "post-check-invalid-merge-state expected ERROR_CODE MERGE_STATE_INVALID, "
+                    f"got {r_post_invalid_merge.code}"
+                )
+        finally:
+            merge_state_path.write_text(original_merge_state, encoding="utf-8")
 
         # 11) повторный execute → BLOCKER (STOP-condition)
         r_forbidden = _run(
