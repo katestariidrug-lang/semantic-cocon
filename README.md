@@ -1308,6 +1308,8 @@ merge в `main` можно выполнить, игнорируя красные
 | `python scripts/check_deliverables.py <merge_id>` | CLI | enforcing | нет | обязателен (direct) |
 | `.github/workflows/ci-post-check.yml` | CI | enforcing | да (через enforcing CLI) | обязателен (delegated) |
 | `scripts/smoke_test_lifecycle.py` | smoke-test | enforcing | нет (сам); инициирует запись через enforcing CLI | обязателен (delegated) |
+| `python -m scripts.tui` | helper | read-only | нет | не требуется |
+| `python -m scripts.smoke_tui_read_only` | smoke-test | read-only | нет | не требуется |
 | `scripts/smoke_post_check.ps1` | helper | read-only | нет | не требуется |
 | `scripts/view_snapshot.py` | helper | read-only | нет | не требуется |
 | `scripts/gate_snapshot.py` | helper | read-only | нет | не требуется |
@@ -1327,6 +1329,8 @@ merge в `main` можно выполнить, игнорируя красные
 | `scripts/view_snapshot.py` | анализ кода | читает `state/snapshots/<id>.canonical.json` через `Path.read_text`; операции записи отсутствуют |
 | `scripts/gate_snapshot.py` | анализ кода | открывает snapshot **только** в режиме `open(..., "r")`; выполняет структурную валидацию и `sys.exit`; записи отсутствуют |
 | `scripts/smoke_post_check.ps1` | анализ скрипта | вызывает `check_deliverables.py`; не содержит PowerShell-команд записи (`New-Item`, `Set-Content`, `Out-File` и т.п.) |
+| `python -m scripts.tui` | smoke-доказательство | запускается в read-only режиме; факт отсутствия write-side-effects подтверждён `python -m scripts.smoke_tui_read_only` |
+| `python -m scripts.smoke_tui_read_only` | анализ кода + запуск | делает snapshot дерева репозитория до/после короткого запуска TUI; при расхождении падает; запись отсутствует |
 
 **Вывод (зафиксированный факт):**
 
@@ -1522,6 +1526,12 @@ merge в `main` можно выполнить, игнорируя красные
   - **Lifecycle:** end-to-end (DECIDE → APPROVE → EXECUTE → MERGE → POST-CHECK)
   - Роль: black-box проверка CLI-контрактов, lifecycle и STOP-condition;
     валидирует exit codes и формат `[LEVEL] ERROR_CODE: message`.
+
+- `smoke_tui_read_only.py`
+  - **TYPE:** smoke-test
+  - **Lifecycle:** локальный smoke (read-only)
+  - Роль: доказательство отсутствия write-side-effects при запуске `tui.py`
+    (snapshot дерева репозитория до/после короткого запуска TUI).
 
 - `smoke_post_check.ps1`
   - **TYPE:** helper
