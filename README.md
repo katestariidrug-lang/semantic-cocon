@@ -1329,7 +1329,7 @@ merge в `main` можно выполнить, игнорируя красные
 | `scripts/view_snapshot.py` | анализ кода | читает `state/snapshots/<id>.canonical.json` через `Path.read_text`; операции записи отсутствуют |
 | `scripts/gate_snapshot.py` | анализ кода | открывает snapshot **только** в режиме `open(..., "r")`; выполняет структурную валидацию и `sys.exit`; записи отсутствуют |
 | `scripts/smoke_post_check.ps1` | анализ скрипта | вызывает `check_deliverables.py`; не содержит PowerShell-команд записи (`New-Item`, `Set-Content`, `Out-File` и т.п.) |
-| `python -m scripts.tui` | smoke-доказательство | запускается в read-only режиме; факт отсутствия write-side-effects подтверждён `python -m scripts.smoke_tui_read_only` |
+| `python scripts/tui.py` | smoke-доказательство | запускается в read-only режиме; факт отсутствия write-side-effects подтверждён `python -m scripts.smoke_tui_read_only` |
 | `python -m scripts.smoke_tui_read_only` | анализ кода + запуск | делает snapshot дерева репозитория до/после короткого запуска TUI; при расхождении падает; запись отсутствует |
 
 **Вывод (зафиксированный факт):**
@@ -1560,12 +1560,13 @@ merge в `main` можно выполнить, игнорируя красные
 
 - `tui.py`
   - **TYPE:** helper
-  - **Lifecycle:** локальный helper-entrypoint (UI)
-  - Роль: Textual TUI как thin-wrapper над публичными CLI проекта.
-    Запускает команды через subprocess, показывает stdout/stderr/exit code,
-    читает состояние только из `state/` для отображения статуса.
-    Запрещено: бизнес-логика, прямые записи в `state/`, обход enforcement-гейтов,
-    альтернативный state или “умные решения” в UI.
+  - **Lifecycle:** локальный helper-entrypoint (UI, read-only)
+  - Роль: Textual TUI как read-only dashboard.
+    Читает факты только из `state/` (snapshots/approvals/merges) и `outputs/pass_2/`
+    и отображает их без интерпретации.
+    Запрещено: subprocess/запуск CLI, любые записи на диск, lifecycle-решения,
+    “можно/нельзя”, “следующий шаг”, хранение собственного состояния lifecycle,
+    обход enforcement-гейтов, альтернативный state или “умные решения” в UI.
 
 #### Служебное
 
