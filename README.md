@@ -143,6 +143,29 @@ python scripts/check_deliverables.py <merge_id>
 
 ---
 
+## CLI Wizard (driver)
+
+Назначение:
+- последовательный запуск существующих entrypoints строго по README.md
+
+Гарантии:
+- не добавляет шагов
+- не пропускает шаги
+- не принимает решений
+- не интерпретирует lifecycle
+
+Механика:
+- wizard НЕ пишет в state/ напрямую
+- wizard извлекает snapshot_id / run_id / merge_id ТОЛЬКО из файлов, созданных enforcing CLI
+- wizard вызывает ТОЛЬКО перечисленные entrypoints:
+  - orchestrator decide
+  - approve
+  - orchestrator execute
+  - merge_pass2
+  - check_deliverables
+
+---
+
 ## Как понимать PASS_1 и PASS_2 (если коротко)
 
 Проект намеренно разделяет работу с LLM на два разных шага, потому что это **разные по смыслу действия**.
@@ -1310,9 +1333,11 @@ merge в `main` можно выполнить, игнорируя красные
 | `scripts/smoke_test_lifecycle.py` | smoke-test | enforcing | нет (сам); инициирует запись через enforcing CLI | обязателен (delegated) |
 | `python -m scripts.tui` | helper | read-only | нет | не требуется |
 | `python -m scripts.smoke_tui_read_only` | smoke-test | read-only | нет | не требуется |
+| `python -m scripts.smoke_cli_wizard_read_only` | smoke-test | read-only | нет | не требуется |
 | `scripts/smoke_post_check.ps1` | helper | read-only | нет | не требуется |
 | `scripts/view_snapshot.py` | helper | read-only | нет | не требуется |
 | `scripts/gate_snapshot.py` | helper | read-only | нет | не требуется |
+| `python -m scripts.cli_wizard` | CLI | enforcing | да (через enforcing CLI) | обязателен (delegated) |
 
 ---
 
@@ -1331,6 +1356,7 @@ merge в `main` можно выполнить, игнорируя красные
 | `scripts/smoke_post_check.ps1` | анализ скрипта | вызывает `check_deliverables.py`; не содержит PowerShell-команд записи (`New-Item`, `Set-Content`, `Out-File` и т.п.) |
 | `python scripts/tui.py` | smoke-доказательство | запускается в read-only режиме; факт отсутствия write-side-effects подтверждён `python -m scripts.smoke_tui_read_only` |
 | `python -m scripts.smoke_tui_read_only` | анализ кода + запуск | делает snapshot дерева репозитория до/после короткого запуска TUI; при расхождении падает; запись отсутствует |
+| `python -m scripts.smoke_cli_wizard_read_only` | анализ кода + запуск | делает snapshot дерева репозитория до/после `python -m scripts.cli_wizard --help`; при расхождении падает; запись отсутствует |
 
 **Вывод (зафиксированный факт):**
 
@@ -1364,6 +1390,24 @@ merge в `main` можно выполнить, игнорируя красные
 
 Отсутствие entrypoint в этом списке считается
 **нарушением governance и архитектурного контракта**.
+
+---
+
+### Правило изменения helper-инструментов (governance)
+
+Helper-инструменты (`TYPE: helper`) **не являются частью архитектурного контракта** проекта.
+
+Изменения helper-кода **НЕ требуют** обновления `README.md`,
+**если одновременно выполняются все условия**:
+
+- helper не участвует в lifecycle;
+- helper не пишет в `state/` или `outputs/`;
+- helper не вводит новых enforcing-entrypoints;
+- helper не изменяет существующие архитектурные инварианты.
+
+Обновление `README.md` требуется **только** при изменении архитектурного контракта.
+Изменения helper-инструментов без изменения контракта
+**не считаются архитектурным дрейфом**.
 
 #### `state/snapshots/` — snapshot-артефакты PASS_1
 
@@ -1532,6 +1576,12 @@ merge в `main` можно выполнить, игнорируя красные
   - **Lifecycle:** локальный smoke (read-only)
   - Роль: доказательство отсутствия write-side-effects при запуске `tui.py`
     (snapshot дерева репозитория до/после короткого запуска TUI).
+
+- `smoke_cli_wizard_read_only.py`
+  - **TYPE:** smoke-test
+  - **Lifecycle:** локальный smoke (read-only)
+  - Роль: доказательство отсутствия write-side-effects при запуске `cli_wizard`
+    (snapshot дерева репозитория до/после `python -m scripts.cli_wizard --help`).
 
 - `smoke_post_check.ps1`
   - **TYPE:** helper
@@ -1731,8 +1781,9 @@ python scripts/check_deliverables.py <merge_id>
 
 Дополнительно:
 
-- `input/task.json` считается частью архитектурного контекста snapshot.  Любое его изменение после PASS_1 автоматически требует  выпуска нового snapshot и нового approve.
-Любое изменение файлов `prompts/pass_1_decide.md`, `prompts/pass_2_execute_core.md` или `prompts/pass_2_execute_anchors.md` считается **изменением архитектурной логики системы** и допускается только через выпуск нового snapshot и новый approve.
+- `input/task.json` считается частью архитектурного контекста snapshot. Любое его изменение после PASS_1 автоматически требует выпуска нового snapshot и нового approve.
+- Любые driver-инструменты (включая `cli_wizard`) не имеют права автоматически изменять `input/task.json` и не должны предлагать “сохранение” этого файла из CLI.
+- Любое изменение файлов `prompts/pass_1_decide.md`, `prompts/pass_2_execute_core.md` или `prompts/pass_2_execute_anchors.md` считается **изменением архитектурной логики системы** и допускается только через выпуск нового snapshot и новый approve.
 - Ручное редактирование любых файлов в `outputs/`   запрещено. Такие результаты считаются архитектурно недействительными   и не подлежат post-check.
 
 ---
@@ -2061,6 +2112,8 @@ Write-matrix является **архитектурным контрактом*
   - `state/merges/by_run/`
 - CI (`.github/workflows/ci-post-check.yml`)
   - через enforcing CLI (delegated; запись происходит только в workspace раннера, без push/commit в репозиторий)
+- `python -m scripts.cli_wizard`
+  - через enforcing CLI (delegated; wizard сам не получает прямых прав записи в `state/`)
 
 **СТРОГО ЗАПРЕЩЕНО писать в `state/`:**
 
