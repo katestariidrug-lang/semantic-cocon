@@ -1,12 +1,11 @@
 """
-Textual TUI thin-wrapper над CLI workflow.
+Textual TUI (read-only dashboard).
 
 TYPE: helper
-ROLE: UI only. No lifecycle logic. No writes to state.
+ROLE: UI only. No lifecycle logic. No writes. No subprocess/CLI запусков.
 
-v0 (read-only): показывает факты по диску (state/ + outputs/), ничего не запускает.
+Показывает факты по диску (state/ + outputs/), ничего не запускает.
 """
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,20 +13,29 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Footer, Header, Static, Select
 
 
 @dataclass(frozen=True)
 class RepoFacts:
     repo_root: Path
+
+    # Инвентарь (факт на диске)
     snapshots: list[str]
-    latest_snapshot_id: str | None
-    latest_snapshot_sha256: str | None
-    latest_snapshot_approved: bool
     runs: list[str]
+
+    # "latest" (факт на диске)
+    latest_snapshot_id: str | None
     latest_run_id: str | None
-    latest_merge_id: str | None
-    merge_state_exists: bool
+
+    # Выбор пользователя (UI state only) + факты по выбранному
+    selected_snapshot_id: str | None
+    selected_snapshot_sha256: str | None
+    selected_snapshot_approved: bool
+
+    selected_run_id: str | None
+    selected_merge_id: str | None
+    selected_merge_state_exists: bool
 
 
 def _find_repo_root(start: Path) -> Path:
@@ -51,7 +59,7 @@ def _safe_read_text(path: Path) -> str | None:
         return None
 
 
-def collect_facts() -> RepoFacts:
+def collect_facts(selected_snapshot_id: str | None = None, selected_run_id: str | None = None) -> RepoFacts:
     here = Path(__file__).resolve()
     repo_root = _find_repo_root(here.parent)
 
@@ -63,32 +71,25 @@ def collect_facts() -> RepoFacts:
     merges_dir = state_dir / "merges"
     by_run_dir = merges_dir / "by_run"
 
+    # инвентарь snapshot_id (факт на диске)
     snapshots = sorted([p.stem.replace(".snapshot", "") for p in snapshots_dir.glob("*.snapshot.json")])
-    latest_snapshot_id = None
-    latest_snapshot_sha256 = None
-    latest_snapshot_approved = False
 
     # latest snapshot = по mtime файла *.snapshot.json (факт на диске)
+    latest_snapshot_id = None
     latest_snapshot_path = None
     for p in snapshots_dir.glob("*.snapshot.json"):
         if latest_snapshot_path is None or p.stat().st_mtime > latest_snapshot_path.stat().st_mtime:
             latest_snapshot_path = p
-
     if latest_snapshot_path is not None:
-        # имя вида: <snapshot_id>.snapshot.json
         latest_snapshot_id = latest_snapshot_path.name.removesuffix(".snapshot.json")
-        sha_path = snapshots_dir / f"{latest_snapshot_id}.sha256"
-        sha_val = _safe_read_text(sha_path)
-        if sha_val:
-            latest_snapshot_sha256 = sha_val
-            latest_snapshot_approved = (approvals_dir / f"{sha_val}.approved").exists()
 
-    # run_id’ы = директории outputs/pass_2/<run_id> (факт на диске)
-    runs = []
+    # инвентарь run_id (факт на диске)
+    runs: list[str] = []
     pass2_dir = outputs_dir / "pass_2"
     if pass2_dir.exists():
         runs = sorted([p.name for p in pass2_dir.iterdir() if p.is_dir()])
 
+    # latest run = по mtime директории outputs/pass_2/<run_id> (факт на диске)
     latest_run_id = None
     latest_run_path = None
     for p in (pass2_dir.iterdir() if pass2_dir.exists() else []):
@@ -97,25 +98,40 @@ def collect_facts() -> RepoFacts:
     if latest_run_path is not None:
         latest_run_id = latest_run_path.name
 
-    # merge_id: читаем pointer state/merges/by_run/<run_id>.merge_id, если есть
-    latest_merge_id = None
-    merge_state_exists = False
-    if latest_run_id:
-        merge_id_text = _safe_read_text(by_run_dir / f"{latest_run_id}.merge_id")
+    # выбор пользователя: если не задан, показываем latest (UI state only)
+    eff_snapshot_id = selected_snapshot_id or latest_snapshot_id
+    eff_run_id = selected_run_id or latest_run_id
+
+    # факты по выбранному snapshot
+    selected_snapshot_sha256 = None
+    selected_snapshot_approved = False
+    if eff_snapshot_id:
+        sha_val = _safe_read_text(snapshots_dir / f"{eff_snapshot_id}.sha256")
+        if sha_val:
+            selected_snapshot_sha256 = sha_val
+            selected_snapshot_approved = (approvals_dir / f"{sha_val}.approved").exists()
+
+    # факты по выбранному run
+    selected_merge_id = None
+    selected_merge_state_exists = False
+    if eff_run_id:
+        merge_id_text = _safe_read_text(by_run_dir / f"{eff_run_id}.merge_id")
         if merge_id_text:
-            latest_merge_id = merge_id_text
-            merge_state_exists = (merges_dir / f"{latest_merge_id}.json").exists()
+            selected_merge_id = merge_id_text
+            selected_merge_state_exists = (merges_dir / f"{selected_merge_id}.json").exists()
 
     return RepoFacts(
         repo_root=repo_root,
         snapshots=snapshots,
-        latest_snapshot_id=latest_snapshot_id,
-        latest_snapshot_sha256=latest_snapshot_sha256,
-        latest_snapshot_approved=latest_snapshot_approved,
         runs=runs,
+        latest_snapshot_id=latest_snapshot_id,
         latest_run_id=latest_run_id,
-        latest_merge_id=latest_merge_id,
-        merge_state_exists=merge_state_exists,
+        selected_snapshot_id=eff_snapshot_id,
+        selected_snapshot_sha256=selected_snapshot_sha256,
+        selected_snapshot_approved=selected_snapshot_approved,
+        selected_run_id=eff_run_id,
+        selected_merge_id=selected_merge_id,
+        selected_merge_state_exists=selected_merge_state_exists,
     )
 
 
@@ -124,20 +140,25 @@ def format_facts(f: RepoFacts) -> str:
         return "yes" if v else "no"
 
     lines: list[str] = []
-    lines.append("READ-ONLY DASHBOARD (v0)")
+    lines.append("READ-ONLY DASHBOARD (v1)")
     lines.append("")
     lines.append(f"repo_root: {f.repo_root}")
     lines.append("")
+
     lines.append(f"state/snapshots: {len(f.snapshots)} file(s)")
     lines.append(f"latest_snapshot_id: {f.latest_snapshot_id or '—'}")
-    lines.append(f"latest_snapshot_sha256: {f.latest_snapshot_sha256 or '—'}")
-    lines.append(f"approved_for_latest_snapshot: {yn(f.latest_snapshot_approved) if f.latest_snapshot_id else '—'}")
+    lines.append(f"selected_snapshot_id: {f.selected_snapshot_id or '—'}")
+    lines.append(f"selected_snapshot_sha256: {f.selected_snapshot_sha256 or '—'}")
+    lines.append(f"selected_snapshot_approved: {yn(f.selected_snapshot_approved) if f.selected_snapshot_id else '—'}")
     lines.append("")
+
     lines.append(f"outputs/pass_2 runs: {len(f.runs)} dir(s)")
     lines.append(f"latest_run_id: {f.latest_run_id or '—'}")
+    lines.append(f"selected_run_id: {f.selected_run_id or '—'}")
     lines.append("")
-    lines.append(f"latest_merge_id (by_run pointer): {f.latest_merge_id or '—'}")
-    lines.append(f"merge_state_exists: {yn(f.merge_state_exists) if f.latest_merge_id else '—'}")
+
+    lines.append(f"selected_merge_id (by_run pointer): {f.selected_merge_id or '—'}")
+    lines.append(f"selected_merge_state_exists: {yn(f.selected_merge_state_exists) if f.selected_merge_id else '—'}")
     lines.append("")
     lines.append("Keys: [r] refresh  |  [q] quit")
     return "\n".join(lines)
@@ -149,20 +170,65 @@ class ReadOnlyDashboard(App):
         ("r", "refresh", "Refresh"),
     ]
 
+    def on_select_changed(self, _event: Select.Changed) -> None:
+        # UI-only: на любое изменение выбора перерисовываем факты.
+        # Во время reload_options подавляем события, чтобы не словить рекурсию.
+        if getattr(self, "_reloading_options", False):
+            return
+        self.refresh_facts(reload_options=False)
+
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical():
+            yield Static("snapshot:", id="lbl_snapshot")
+            yield Select([], id="sel_snapshot", prompt="select snapshot")
+            yield Static("run:", id="lbl_run")
+            yield Select([], id="sel_run", prompt="select run")
             yield Static("", id="facts")
         yield Footer()
 
     def on_mount(self) -> None:
-        self.refresh_facts()
+        self.refresh_facts(reload_options=True)
 
     def action_refresh(self) -> None:
-        self.refresh_facts()
+        self.refresh_facts(reload_options=True)
 
-    def refresh_facts(self) -> None:
-        facts = collect_facts()
+    def _selected_ids(self) -> tuple[str | None, str | None]:
+        sel_snapshot = self.query_one("#sel_snapshot", Select)
+        sel_run = self.query_one("#sel_run", Select)
+        snap = sel_snapshot.value if isinstance(sel_snapshot.value, str) else None
+        run = sel_run.value if isinstance(sel_run.value, str) else None
+        return snap, run
+
+    def refresh_facts(self, reload_options: bool = False) -> None:
+        snap_id, run_id = self._selected_ids()
+        facts = collect_facts(selected_snapshot_id=snap_id, selected_run_id=run_id)
+
+        if reload_options:
+            self._reloading_options = True
+            try:
+                sel_snapshot = self.query_one("#sel_snapshot", Select)
+                sel_run = self.query_one("#sel_run", Select)
+
+                snap_opts = [(s, s) for s in facts.snapshots]
+                run_opts = [(r, r) for r in facts.runs]
+
+                sel_snapshot.set_options(snap_opts)
+                sel_run.set_options(run_opts)
+
+                # если значение не выбрано/устарело, выставляем latest (UI state only)
+                if facts.selected_snapshot_id and facts.selected_snapshot_id in facts.snapshots:
+                    sel_snapshot.value = facts.selected_snapshot_id
+                else:
+                    sel_snapshot.value = None
+
+                if facts.selected_run_id and facts.selected_run_id in facts.runs:
+                    sel_run.value = facts.selected_run_id
+                else:
+                    sel_run.value = None
+            finally:
+                self._reloading_options = False
+
         self.query_one("#facts", Static).update(format_facts(facts))
 
 
