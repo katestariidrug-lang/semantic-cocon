@@ -13,7 +13,7 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Footer, Header, Static, Select
+from textual.widgets import Footer, Header, Static, Select, TextArea
 
 
 @dataclass(frozen=True)
@@ -57,6 +57,39 @@ def _safe_read_text(path: Path) -> str | None:
         return None
     except OSError:
         return None
+
+
+def _list_files_recursive(root: Path) -> list[str]:
+    """
+    Read-only: список файлов внутри root (рекурсивно).
+    Возвращает относительные POSIX-пути (для стабильного отображения).
+    """
+    if not root.exists() or not root.is_dir():
+        return []
+    out: list[str] = []
+    for p in root.rglob("*"):
+        if p.is_file():
+            out.append(p.relative_to(root).as_posix())
+    return sorted(out)
+
+
+def _safe_read_raw_preview(path: Path) -> str:
+    """
+    Read-only: безопасный raw preview.
+    - utf-8 текст показываем как есть
+    - бинарник/нечитаемо -> заглушка
+    """
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        return "(unavailable)"
+    except OSError:
+        return "(unavailable)"
+
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return "(binary file; raw preview disabled)"
 
 
 def collect_facts(selected_snapshot_id: str | None = None, selected_run_id: str | None = None) -> RepoFacts:
@@ -140,7 +173,7 @@ def format_facts(f: RepoFacts) -> str:
         return "yes" if v else "no"
 
     lines: list[str] = []
-    lines.append("READ-ONLY DASHBOARD (v1)")
+    lines.append("READ-ONLY DASHBOARD (v2)")
     lines.append("")
     lines.append(f"repo_root: {f.repo_root}")
     lines.append("")
@@ -182,12 +215,25 @@ class ReadOnlyDashboard(App):
         with Vertical():
             yield Static("snapshot:", id="lbl_snapshot")
             yield Select([], id="sel_snapshot", prompt="select snapshot")
+
+            yield Static("snapshot file:", id="lbl_snapshot_file")
+            yield Select([], id="sel_snapshot_file", prompt="select snapshot file")
+            yield TextArea("", id="snapshot_content")
+
             yield Static("run:", id="lbl_run")
             yield Select([], id="sel_run", prompt="select run")
+
+            yield Static("run file:", id="lbl_run_file")
+            yield Select([], id="sel_run_file", prompt="select run file")
+            yield TextArea("", id="run_content")
+
             yield Static("", id="facts")
         yield Footer()
 
     def on_mount(self) -> None:
+        # Вьюверы строго read-only
+        self.query_one("#snapshot_content", TextArea).read_only = True
+        self.query_one("#run_content", TextArea).read_only = True
         self.refresh_facts(reload_options=True)
 
     def action_refresh(self) -> None:
@@ -204,12 +250,18 @@ class ReadOnlyDashboard(App):
         snap_id, run_id = self._selected_ids()
         facts = collect_facts(selected_snapshot_id=snap_id, selected_run_id=run_id)
 
+        # Виджеты
+        sel_snapshot = self.query_one("#sel_snapshot", Select)
+        sel_run = self.query_one("#sel_run", Select)
+        sel_snapshot_file = self.query_one("#sel_snapshot_file", Select)
+        sel_run_file = self.query_one("#sel_run_file", Select)
+        snapshot_content = self.query_one("#snapshot_content", TextArea)
+        run_content = self.query_one("#run_content", TextArea)
+
+        # 1) (опционально) перезагрузка inventory snapshot/run
         if reload_options:
             self._reloading_options = True
             try:
-                sel_snapshot = self.query_one("#sel_snapshot", Select)
-                sel_run = self.query_one("#sel_run", Select)
-
                 snap_opts = [(s, s) for s in facts.snapshots]
                 run_opts = [(r, r) for r in facts.runs]
 
@@ -229,6 +281,52 @@ class ReadOnlyDashboard(App):
             finally:
                 self._reloading_options = False
 
+        # 2) Snapshot file viewer (ровно один файл)
+        snap_file_rel: str | None = None
+        snap_file_abs: Path | None = None
+        if facts.selected_snapshot_id:
+            snap_file_abs = facts.repo_root / "state" / "snapshots" / f"{facts.selected_snapshot_id}.snapshot.json"
+            if snap_file_abs.exists():
+                snap_file_rel = f"state/snapshots/{facts.selected_snapshot_id}.snapshot.json"
+
+        self._reloading_options = True
+        try:
+            if snap_file_rel:
+                sel_snapshot_file.set_options([(snap_file_rel, snap_file_rel)])
+                sel_snapshot_file.value = snap_file_rel
+            else:
+                sel_snapshot_file.set_options([])
+                sel_snapshot_file.value = None
+        finally:
+            self._reloading_options = False
+
+        if snap_file_abs and snap_file_abs.exists():
+            snapshot_content.text = _safe_read_raw_preview(snap_file_abs)
+        else:
+            snapshot_content.text = "(unavailable)"
+
+        # 3) Run file viewer (рекурсивный список файлов)
+        run_root = facts.repo_root / "outputs" / "pass_2" / facts.selected_run_id if facts.selected_run_id else None
+        run_files = _list_files_recursive(run_root) if run_root else []
+
+        # current selection (если пользователь уже выбирал файл)
+        current_run_file = sel_run_file.value if isinstance(sel_run_file.value, str) else None
+        if current_run_file not in run_files:
+            current_run_file = run_files[0] if run_files else None
+
+        self._reloading_options = True
+        try:
+            sel_run_file.set_options([(p, p) for p in run_files])
+            sel_run_file.value = current_run_file
+        finally:
+            self._reloading_options = False
+
+        if run_root and current_run_file:
+            run_content.text = _safe_read_raw_preview(run_root / current_run_file)
+        else:
+            run_content.text = "(unavailable)"
+
+        # 4) Summary facts (как было)
         self.query_one("#facts", Static).update(format_facts(facts))
 
 
