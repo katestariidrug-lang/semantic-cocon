@@ -63,17 +63,42 @@ def _audit_tui_imports(repo: Path) -> list[str]:
                 name = alias.name or ""
                 if _base(name) in forbidden:
                     offenders.append(f"import {name}")
+
         elif isinstance(node, ast.ImportFrom):
             mod = node.module or ""
             # from X import Y  (X может быть '', тогда это относительный импорт)
             if _base(mod) in forbidden:
                 offenders.append(f"from {mod} import ...")
             else:
-                # ловим from something import orchestrator (редко, но на всякий)
+                # ловим from something import orchestrator
                 for alias in node.names:
                     nm = alias.name or ""
                     if _base(nm) in forbidden:
                         offenders.append(f"from {mod or '(relative)'} import {nm}")
+
+        # dynamic imports: importlib.import_module("scripts.orchestrator")
+        elif isinstance(node, ast.Call):
+            fn = node.func
+
+            # __import__("scripts.orchestrator")
+            if isinstance(fn, ast.Name) and fn.id == "__import__":
+                if node.args and isinstance(node.args[0], ast.Constant):
+                    mod = str(node.args[0].value)
+                    if _base(mod) in forbidden:
+                        offenders.append(f"__import__({mod})")
+
+            # importlib.import_module("scripts.orchestrator")
+            elif isinstance(fn, ast.Attribute):
+                if (
+                    fn.attr == "import_module"
+                    and isinstance(fn.value, ast.Name)
+                    and fn.value.id == "importlib"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                ):
+                    mod = str(node.args[0].value)
+                    if _base(mod) in forbidden:
+                        offenders.append(f"importlib.import_module({mod})")
 
     return sorted(set(offenders))
 
