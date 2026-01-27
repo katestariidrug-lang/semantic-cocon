@@ -143,26 +143,23 @@ python scripts/check_deliverables.py <merge_id>
 
 ---
 
-## CLI Wizard (driver)
+## CLI Wizard (static contract viewer, non-enforcing)
 
 Назначение:
-- последовательный запуск существующих entrypoints строго по README.md
+- показать пользователю статическое описание workflow и CLI-контрактов из README.md
+- помочь найти нужные команды и аргументы, не анализируя состояние проекта
 
-Гарантии:
-- не добавляет шагов
-- не пропускает шаги
-- не принимает решений
-- не интерпретирует lifecycle
+Гарантии (HARD):
+- НЕ анализирует `state/`
+- НЕ анализирует `outputs/`
+- НЕ вычисляет FSM и НЕ делает выводов "можно / нельзя"
+- НЕ определяет "следующий шаг"
+- НЕ запускает subprocess и НЕ вызывает enforcing CLI
+- НЕ пишет ни в одну write-поверхность (state/, outputs/, input/, prompts/, .github/, корень)
 
 Механика:
-- wizard НЕ пишет в state/ напрямую
-- wizard извлекает snapshot_id / run_id / merge_id ТОЛЬКО из файлов, созданных enforcing CLI
-- wizard вызывает ТОЛЬКО перечисленные entrypoints:
-  - orchestrator decide
-  - approve
-  - orchestrator execute
-  - merge_pass2
-  - check_deliverables
+- wizard печатает только статический инструктивный текст (help/usage и выдержки из README.md)
+- любые решения и проверки остаются исключительно за enforcing CLI, перечисленными в README.md
 
 ---
 
@@ -1338,7 +1335,7 @@ merge в `main` можно выполнить, игнорируя красные
 | `scripts/smoke_post_check.ps1` | helper | read-only | нет | не требуется |
 | `scripts/view_snapshot.py` | helper | read-only | нет | не требуется |
 | `scripts/gate_snapshot.py` | helper | read-only | нет | не требуется |
-| `python -m scripts.cli_wizard` | CLI | enforcing | да (через enforcing CLI) | обязателен (delegated) |
+| `python -m scripts.cli_wizard` | helper | read-only | нет | не требуется |
 
 ---
 
@@ -2195,8 +2192,8 @@ Write-matrix является **архитектурным контрактом*
   - `state/merges/by_run/`
 - CI (`.github/workflows/ci-post-check.yml`)
   - через enforcing CLI (delegated; запись происходит только в workspace раннера, без push/commit в репозиторий)
-- `python -m scripts.cli_wizard`
-  - через enforcing CLI (delegated; wizard сам не получает прямых прав записи в `state/`)
+- (удалено) `python -m scripts.cli_wizard` — helper/read-only viewer, не запускает CLI и не пишет в state/
+
 
 **СТРОГО ЗАПРЕЩЕНО писать в `state/`:**
 
