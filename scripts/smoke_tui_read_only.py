@@ -37,9 +37,9 @@ def _audit_tui_imports(repo: Path) -> list[str]:
     except SyntaxError as e:
         return [f"tui.py syntax error: {e.msg} (line {e.lineno})"]
 
-    # Запрещённые enforcing-модули по README (и их локальные short-import варианты).
-    forbidden = {
-        "scripts",
+    # Запрещённые enforcing-модули по README.
+    # ВАЖНО: "scripts" сам по себе НЕ запрещён, запрещены конкретные enforcing-модули.
+    forbidden_short = {
         "orchestrator",
         "lifecycle",
         "llm_cli_bridge",
@@ -48,57 +48,155 @@ def _audit_tui_imports(repo: Path) -> list[str]:
         "audit_entrypoints",
         "cli_wizard",
     }
+    forbidden_full = {f"scripts.{m}" for m in forbidden_short}
 
     offenders: list[str] = []
 
-    def _base(mod: str) -> str:
-        mod = mod.strip()
+    def _is_forbidden_module(mod: str) -> bool:
+        mod = (mod or "").strip()
         if not mod:
-            return ""
-        return mod.split(".", 1)[0]
+            return False
+
+        # Точные запрещённые: scripts.<enforcing>
+        if mod in forbidden_full:
+            return True
+
+        # Также запрещаем импорт "коротких" enforcing-модулей, если кто-то делает short-import
+        # (например "import orchestrator" или "from X import orchestrator").
+        if mod in forbidden_short:
+            return True
+
+        # И ещё вариант: строка вида "scripts.<name>.<sub>"
+        if mod.startswith("scripts."):
+            parts = mod.split(".")
+            if len(parts) >= 2 and parts[1] in forbidden_short:
+                return True
+
+        return False
+
+
+    # Минимальный статический трекинг алиасов/присваиваний (без выполнения кода).
+    # Цель: детектировать alias-based и indirect dynamic imports одной строкой.
+    importlib_aliases: set[str] = set()  # имена, указывающие на модуль importlib (включая alias)
+    const_str: dict[str, str] = {}       # name -> строковый литерал
+    dyn_import_funcs: set[str] = set()   # name -> callable, ведущий к динамическому импорту
+
+    def _note_const_str(target: ast.expr, value: ast.expr) -> None:
+        if isinstance(target, ast.Name) and isinstance(value, ast.Constant) and isinstance(value.value, str):
+            const_str[target.id] = value.value
+
+    def _mark_dyn_import_func(target: ast.expr) -> None:
+        if isinstance(target, ast.Name):
+            dyn_import_funcs.add(target.id)
+
+    def _resolve_str(expr: ast.expr) -> str | None:
+        if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+            return expr.value
+        if isinstance(expr, ast.Name) and expr.id in const_str:
+            return const_str[expr.id]
+        return None
+
+    def _is_importlib_name(expr: ast.expr) -> bool:
+        return isinstance(expr, ast.Name) and expr.id in importlib_aliases
+
+    def _is_direct_import_module_attr(expr: ast.expr) -> bool:
+        # X.import_module где X = importlib или alias
+        return isinstance(expr, ast.Attribute) and expr.attr == "import_module" and _is_importlib_name(expr.value)
+
+    def _is_getattr_import_module_call(expr: ast.expr) -> bool:
+        # getattr(X, "import_module") где X = importlib или alias
+        if not isinstance(expr, ast.Call):
+            return False
+        if not (isinstance(expr.func, ast.Name) and expr.func.id == "getattr"):
+            return False
+        if len(expr.args) < 2:
+            return False
+        if not _is_importlib_name(expr.args[0]):
+            return False
+        return isinstance(expr.args[1], ast.Constant) and expr.args[1].value == "import_module"
+
+    def _is_dyn_import_callee(expr: ast.expr) -> bool:
+        # __import__(...) или alias на __import__
+        if isinstance(expr, ast.Name):
+            if expr.id == "__import__":
+                return True
+            if expr.id in dyn_import_funcs:
+                return True
+        # importlib.import_module(...) или alias.import_module(...)
+        if _is_direct_import_module_attr(expr):
+            return True
+        # getattr(importlib, "import_module")(...)
+        if _is_getattr_import_module_call(expr):
+            return True
+        return False
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 name = alias.name or ""
-                if _base(name) in forbidden:
+
+                # Трекаем alias importlib as X
+                if name == "importlib":
+                    importlib_aliases.add(alias.asname or "importlib")
+
+                # Запрещаем только enforcing-модули, не весь "scripts".
+                if _is_forbidden_module(name):
                     offenders.append(f"import {name}")
+
 
         elif isinstance(node, ast.ImportFrom):
             mod = node.module or ""
-            # from X import Y  (X может быть '', тогда это относительный импорт)
-            if _base(mod) in forbidden:
+            # from scripts.orchestrator import X
+            if _is_forbidden_module(mod):
                 offenders.append(f"from {mod} import ...")
             else:
-                # ловим from something import orchestrator
+                # from scripts import orchestrator
                 for alias in node.names:
                     nm = alias.name or ""
-                    if _base(nm) in forbidden:
+                    if _is_forbidden_module(nm) or _is_forbidden_module(f"{mod}.{nm}" if mod else nm):
                         offenders.append(f"from {mod or '(relative)'} import {nm}")
 
-        # dynamic imports: importlib.import_module("scripts.orchestrator")
+
+        elif isinstance(node, ast.Assign):
+            # a = "scripts.orchestrator"
+            for t in node.targets:
+                _note_const_str(t, node.value)
+
+            # fn = importlib.import_module  (или alias.import_module)
+            if _is_direct_import_module_attr(node.value):
+                for t in node.targets:
+                    _mark_dyn_import_func(t)
+
+            # fn = getattr(importlib, "import_module")
+            if _is_getattr_import_module_call(node.value):
+                for t in node.targets:
+                    _mark_dyn_import_func(t)
+
+            # fn = __import__
+            if isinstance(node.value, ast.Name) and node.value.id == "__import__":
+                for t in node.targets:
+                    _mark_dyn_import_func(t)
+
+        # dynamic imports (любая форма) — запрещены контрактом, и особенно если ведут к enforcing-модулям.
         elif isinstance(node, ast.Call):
             fn = node.func
 
-            # __import__("scripts.orchestrator")
-            if isinstance(fn, ast.Name) and fn.id == "__import__":
-                if node.args and isinstance(node.args[0], ast.Constant):
-                    mod = str(node.args[0].value)
-                    if _base(mod) in forbidden:
-                        offenders.append(f"__import__({mod})")
+            # (intentionally removed duplicate _is_dyn_import_callee;
+            # use the top-level helper definition)
 
-            # importlib.import_module("scripts.orchestrator")
-            elif isinstance(fn, ast.Attribute):
-                if (
-                    fn.attr == "import_module"
-                    and isinstance(fn.value, ast.Name)
-                    and fn.value.id == "importlib"
-                    and node.args
-                    and isinstance(node.args[0], ast.Constant)
-                ):
-                    mod = str(node.args[0].value)
-                    if _base(mod) in forbidden:
-                        offenders.append(f"importlib.import_module({mod})")
+            if _is_dyn_import_callee(fn):
+                # Аргумент модуля может быть литералом или именем переменной со строкой.
+                mod0 = _resolve_str(node.args[0]) if node.args else None
+
+                # Если строка известна — проверяем точечно на enforcing.
+                if mod0 is not None:
+                    if _is_forbidden_module(mod0):
+                        offenders.append(f"indirect dynamic import: {mod0}")
+                else:
+                    # Нелитеральный/неразрешённый динамический импорт — сам по себе нарушение:
+                    # иначе это один-лайн обход.
+                    offenders.append("indirect dynamic import: <non-literal module>")
+
 
     return sorted(set(offenders))
 
@@ -136,7 +234,7 @@ def main() -> int:
 
     offenders = _audit_tui_imports(repo)
     if offenders:
-        print("[BLOCKER] GOVERNANCE_VIOLATION: TUI imports enforcing modules (forbidden): " + "; ".join(offenders))
+        print("[BLOCKER] GOVERNANCE_VIOLATION: indirect dynamic enforcing import detected: " + "; ".join(offenders))
         return 2
 
     before = _snapshot_tree(repo)
