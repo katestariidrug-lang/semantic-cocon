@@ -1,8 +1,17 @@
 """
-CLI Wizard (driver)
+CLI Wizard (static contract viewer, non-enforcing)
 
-Контракт: thin driver. Не добавляет шагов, не принимает решений, не интерпретирует lifecycle.
-В этой заготовке: только CLI-скелет без side-effects.
+Контракт:
+- helper / read-only
+- НЕ driver
+- НЕ участвует в lifecycle
+- НЕ интерпретирует состояние проекта
+- НЕ определяет порядок шагов
+- НЕ запускает CLI и не имеет side-effects
+
+Назначение:
+- печать статического инструктивного текста и help/usage
+  на основе README.md
 """
 
 from __future__ import annotations
@@ -13,12 +22,12 @@ import argparse
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python -m scripts.cli_wizard",
-        description="Thin driver for the canonical pipeline described in README.md (no side-effects in this stub).",
+        description="Static, read-only contract viewer based on README.md (no lifecycle logic, no side-effects).",
     )
     p.add_argument(
         "--version",
         action="store_true",
-        help="Print version info (placeholder).",
+        help="Print static version info (read-only).",
     )
     return p
 

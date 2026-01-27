@@ -252,14 +252,29 @@ def main() -> int:
     )
 
     try:
-        proc.communicate(timeout=1.0)
+        out, err = proc.communicate(timeout=1.0)
     except subprocess.TimeoutExpired:
         proc.terminate()
         try:
-            proc.communicate(timeout=2.0)
+            out, err = proc.communicate(timeout=2.0)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.communicate(timeout=2.0)
+            out, err = proc.communicate(timeout=2.0)
+
+    # ---- UX contract checks (read-only projection) ----
+    stdout = out or ""
+
+    if "OBSERVED_FSM_STATE:" not in stdout:
+        print("[FAIL] UX_CONTRACT_VIOLATION: OBSERVED_FSM_STATE not found in TUI output")
+        return 1
+
+    if "ALLOWED ACTIONS" not in stdout:
+        print("[FAIL] UX_CONTRACT_VIOLATION: ALLOWED ACTIONS section not found in TUI output")
+        return 1
+
+    if "FORBIDDEN ACTIONS" not in stdout:
+        print("[FAIL] UX_CONTRACT_VIOLATION: FORBIDDEN ACTIONS section not found in TUI output")
+        return 1
 
     after = _snapshot_tree(repo)
 
@@ -281,7 +296,7 @@ def main() -> int:
                 print(f"  - {rel} (size={size}, mtime_ns={mtime})")
         return 1
 
-    print("[PASS] OK: TUI не изменил дерево репозитория (read-only доказан)")
+    print("[PASS] OK: TUI read-only + UX contract projection доказаны")
     return 0
 
 
