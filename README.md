@@ -456,6 +456,7 @@ LIFECYCLE_VIOLATION      # вызов команды вне допустимог
 MERGE_STATE_INVALID     # отсутствие / повреждение canonical merge-state
 SNAPSHOT_INVALID        # отсутствие / повреждение canonical snapshot
 FINGERPRINT_MISMATCH    # drift README.md ↔ enforcement-код
+GOVERNANCE_VIOLATION    # нарушение governance-инварианта (запреты README.md)
 ```
 
 ### FAIL — некорректные данные или результаты (exit code 1)

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
 from pathlib import Path
+
 
 
 def _repo_root() -> Path:
@@ -12,6 +14,68 @@ def _repo_root() -> Path:
         if (p / "README.md").exists():
             return p
     return here.parent
+
+
+def _audit_tui_imports(repo: Path) -> list[str]:
+    """
+    Governance enforcement (read-only):
+    TUI не имеет права импортировать enforcing-модули напрямую или через локальные short-imports.
+
+    Проверка статическая (AST), без выполнения кода.
+    Возвращает список нарушений (строки для сообщения).
+    """
+    tui_path = repo / "scripts" / "tui.py"
+    try:
+        src = tui_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return [f"tui.py not found at {tui_path}"]
+    except OSError:
+        return [f"tui.py unreadable at {tui_path}"]
+
+    try:
+        tree = ast.parse(src, filename=str(tui_path))
+    except SyntaxError as e:
+        return [f"tui.py syntax error: {e.msg} (line {e.lineno})"]
+
+    # Запрещённые enforcing-модули по README (и их локальные short-import варианты).
+    forbidden = {
+        "scripts",
+        "orchestrator",
+        "lifecycle",
+        "llm_cli_bridge",
+        "merge_pass2",
+        "check_deliverables",
+        "audit_entrypoints",
+        "cli_wizard",
+    }
+
+    offenders: list[str] = []
+
+    def _base(mod: str) -> str:
+        mod = mod.strip()
+        if not mod:
+            return ""
+        return mod.split(".", 1)[0]
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.name or ""
+                if _base(name) in forbidden:
+                    offenders.append(f"import {name}")
+        elif isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            # from X import Y  (X может быть '', тогда это относительный импорт)
+            if _base(mod) in forbidden:
+                offenders.append(f"from {mod} import ...")
+            else:
+                # ловим from something import orchestrator (редко, но на всякий)
+                for alias in node.names:
+                    nm = alias.name or ""
+                    if _base(nm) in forbidden:
+                        offenders.append(f"from {mod or '(relative)'} import {nm}")
+
+    return sorted(set(offenders))
 
 
 def _snapshot_tree(root: Path) -> list[tuple[str, int, float]]:
@@ -44,6 +108,11 @@ def _snapshot_tree(root: Path) -> list[tuple[str, int, float]]:
 
 def main() -> int:
     repo = _repo_root()
+
+    offenders = _audit_tui_imports(repo)
+    if offenders:
+        print("[BLOCKER] GOVERNANCE_VIOLATION: TUI imports enforcing modules (forbidden): " + "; ".join(offenders))
+        return 2
 
     before = _snapshot_tree(repo)
 
