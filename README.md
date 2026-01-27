@@ -456,6 +456,7 @@ LIFECYCLE_VIOLATION      # вызов команды вне допустимог
 MERGE_STATE_INVALID     # отсутствие / повреждение canonical merge-state
 SNAPSHOT_INVALID        # отсутствие / повреждение canonical snapshot
 FINGERPRINT_MISMATCH    # drift README.md ↔ enforcement-код
+GOVERNANCE_VIOLATION    # нарушение governance-инварианта (запреты README.md)
 ```
 
 ### FAIL — некорректные данные или результаты (exit code 1)
@@ -1655,16 +1656,27 @@ TUI **читает и отображает ТОЛЬКО факты**, уже з�
 - не хранит собственного состояния lifecycle
 - не обходится без enforcement-гейтов
 - не дублирует и не заменяет CLI
-- **не импортирует enforcing-модули** (прямо или транзитивно), включая:
-  - `scripts/orchestrator.py`
-  - `scripts/lifecycle.py`
-  - `scripts/llm_cli_bridge.py`
-  - `scripts/merge_pass2.py`
-  - `scripts/check_deliverables.py`
-  - `scripts/audit_entrypoints.py`
-  - `scripts/cli_wizard.py`
+- **не импортирует enforcing-модули** (прямо или транзитивно) **ни в какой форме**, включая:
+  - обычный import (`import X`, `from X import Y`)
+  - alias-based import (`import X as Y`)
+  - dynamic import (`importlib.import_module(...)`, `__import__(...)`)
+  - indirect dynamic import через alias/переменные/атрибуты
+    (например `import importlib as il; il.import_module(...)`,
+    `getattr(importlib, "import_module")(...)`, вызов через переменную со строкой модуля и т.п.)
+  - любые эквивалентные способы загрузки модулей Python во время выполнения
+
+  Запрещённые enforcing-модули (включая любые обращения к ним по строковым именам):
+  - `scripts.orchestrator` / `scripts/orchestrator.py`
+  - `scripts.lifecycle` / `scripts/lifecycle.py`
+  - `scripts.llm_cli_bridge` / `scripts/llm_cli_bridge.py`
+  - `scripts.merge_pass2` / `scripts/merge_pass2.py`
+  - `scripts.check_deliverables` / `scripts/check_deliverables.py`
+  - `scripts.audit_entrypoints` / `scripts/audit_entrypoints.py`
+  - `scripts.cli_wizard` / `scripts/cli_wizard.py`
+
   Любая зависимость TUI от enforcing-кода (даже “просто константы/утилиты”) запрещена.
-  Нарушение этого инварианта считается нарушением governance-контракта и должно приводить к **BLOCKER** в соответствующем audit/smoke.
+  Любая попытка такого импорта должна трактоваться как нарушение governance-инварианта
+  и приводить к **[BLOCKER] GOVERNANCE_VIOLATION: ...** в соответствующем audit/smoke.
 
 **Статус:**
 - TUI не является гейтом
