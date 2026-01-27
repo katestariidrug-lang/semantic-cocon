@@ -9,7 +9,10 @@ ROLE: UI only. No lifecycle logic. No writes. No subprocess/CLI запусков
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
+from typing import Any
+import sys
 
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
@@ -30,12 +33,28 @@ class RepoFacts:
 
     # Выбор пользователя (UI state only) + факты по выбранному
     selected_snapshot_id: str | None
-    selected_snapshot_exists: bool
+
+    # snapshot доказательства для S1 (FSM)
+    selected_snapshot_json_exists: bool
+    selected_snapshot_canonical_exists: bool
+    selected_snapshot_sha_file_exists: bool
+    selected_snapshot_ready: bool  # json + canonical + sha256
+
     selected_snapshot_sha256: str | None
-    selected_snapshot_approved: bool
+    selected_snapshot_approved: bool  # approvals/<sha>.approved
 
     selected_run_id: str | None
     selected_run_exists: bool
+
+    # run доказательства для S3/S4
+    selected_run_core_exists: bool
+    selected_run_anchors_exists: bool
+
+    # immutable_fingerprint наблюдение (best-effort, read-only)
+    selected_core_immutable_fingerprint: str | None
+    selected_anchors_immutable_fingerprint: str | None
+    selected_stage_fingerprints_match: bool  # core == anchors and not None
+
     selected_merge_id: str | None
     selected_merge_state_exists: bool
 
@@ -94,6 +113,33 @@ def _safe_read_raw_preview(path: Path) -> str:
         return "(binary file; raw preview disabled)"
 
 
+def _safe_read_json(path: Path) -> Any | None:
+    """
+    Read-only: best-effort JSON reader.
+    Любая ошибка => None (UI не является гейтом).
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _extract_immutable_fingerprint(execution_result_path: Path) -> str | None:
+    """
+    Read-only: пытаемся вытащить immutable_fingerprint из execution_result.json.
+    Это НЕ enforcement и НЕ гарантия; только наблюдение.
+    """
+    obj = _safe_read_json(execution_result_path)
+    if not isinstance(obj, dict):
+        return None
+    val = obj.get("immutable_fingerprint")
+    return val if isinstance(val, str) and val.strip() else None
+
+
 def collect_facts(selected_snapshot_id: str | None = None, selected_run_id: str | None = None) -> RepoFacts:
     here = Path(__file__).resolve()
     repo_root = _find_repo_root(here.parent)
@@ -137,23 +183,67 @@ def collect_facts(selected_snapshot_id: str | None = None, selected_run_id: str 
     eff_snapshot_id = selected_snapshot_id or latest_snapshot_id
     eff_run_id = selected_run_id or latest_run_id
 
-    # факты по выбранному snapshot
-    selected_snapshot_exists = False
+    # факты по выбранному snapshot (FSM S1/S2 доказательства)
+    selected_snapshot_json_exists = False
+    selected_snapshot_canonical_exists = False
+    selected_snapshot_sha_file_exists = False
+    selected_snapshot_ready = False
+
     selected_snapshot_sha256 = None
     selected_snapshot_approved = False
+
     if eff_snapshot_id:
-        selected_snapshot_exists = (snapshots_dir / f"{eff_snapshot_id}.snapshot.json").exists()
-        sha_val = _safe_read_text(snapshots_dir / f"{eff_snapshot_id}.sha256")
+        snap_json = snapshots_dir / f"{eff_snapshot_id}.snapshot.json"
+        snap_canonical = snapshots_dir / f"{eff_snapshot_id}.canonical.json"
+        snap_sha = snapshots_dir / f"{eff_snapshot_id}.sha256"
+
+        selected_snapshot_json_exists = snap_json.exists()
+        selected_snapshot_canonical_exists = snap_canonical.exists()
+        selected_snapshot_sha_file_exists = snap_sha.exists()
+        selected_snapshot_ready = (
+            selected_snapshot_json_exists
+            and selected_snapshot_canonical_exists
+            and selected_snapshot_sha_file_exists
+        )
+
+        sha_val = _safe_read_text(snap_sha)
         if sha_val:
             selected_snapshot_sha256 = sha_val
             selected_snapshot_approved = (approvals_dir / f"{sha_val}.approved").exists()
 
-    # факты по выбранному run
+    # факты по выбранному run (FSM S3/S4 доказательства)
     selected_run_exists = False
+    selected_run_core_exists = False
+    selected_run_anchors_exists = False
+
+    selected_core_immutable_fingerprint = None
+    selected_anchors_immutable_fingerprint = None
+    selected_stage_fingerprints_match = False
+
     selected_merge_id = None
     selected_merge_state_exists = False
+
     if eff_run_id:
-        selected_run_exists = (pass2_dir / eff_run_id).exists()
+        run_root = pass2_dir / eff_run_id
+        selected_run_exists = run_root.exists()
+
+        core_dir = run_root / "core"
+        anchors_dir = run_root / "anchors"
+        selected_run_core_exists = core_dir.exists() and core_dir.is_dir()
+        selected_run_anchors_exists = anchors_dir.exists() and anchors_dir.is_dir()
+
+        if selected_run_core_exists:
+            selected_core_immutable_fingerprint = _extract_immutable_fingerprint(core_dir / "execution_result.json")
+        if selected_run_anchors_exists:
+            selected_anchors_immutable_fingerprint = _extract_immutable_fingerprint(anchors_dir / "execution_result.json")
+
+        if (
+            selected_core_immutable_fingerprint
+            and selected_anchors_immutable_fingerprint
+            and selected_core_immutable_fingerprint == selected_anchors_immutable_fingerprint
+        ):
+            selected_stage_fingerprints_match = True
+
         merge_id_text = _safe_read_text(by_run_dir / f"{eff_run_id}.merge_id")
         if merge_id_text:
             selected_merge_id = merge_id_text
@@ -166,30 +256,107 @@ def collect_facts(selected_snapshot_id: str | None = None, selected_run_id: str 
         latest_snapshot_id=latest_snapshot_id,
         latest_run_id=latest_run_id,
         selected_snapshot_id=eff_snapshot_id,
-        selected_snapshot_exists=selected_snapshot_exists,
+        selected_snapshot_json_exists=selected_snapshot_json_exists,
+        selected_snapshot_canonical_exists=selected_snapshot_canonical_exists,
+        selected_snapshot_sha_file_exists=selected_snapshot_sha_file_exists,
+        selected_snapshot_ready=selected_snapshot_ready,
         selected_snapshot_sha256=selected_snapshot_sha256,
         selected_snapshot_approved=selected_snapshot_approved,
         selected_run_id=eff_run_id,
         selected_run_exists=selected_run_exists,
+        selected_run_core_exists=selected_run_core_exists,
+        selected_run_anchors_exists=selected_run_anchors_exists,
+        selected_core_immutable_fingerprint=selected_core_immutable_fingerprint,
+        selected_anchors_immutable_fingerprint=selected_anchors_immutable_fingerprint,
+        selected_stage_fingerprints_match=selected_stage_fingerprints_match,
         selected_merge_id=selected_merge_id,
         selected_merge_state_exists=selected_merge_state_exists,
     )
-
 
 
 def format_facts(f: RepoFacts) -> str:
     def yn(v: bool) -> str:
         return "yes" if v else "no"
 
+    def observed_fsm_state() -> str:
+        # Порядок приоритета = “самое терминальное, что доказано фактами”.
+        # Это НЕ enforcement и НЕ “можно продолжать”, только классификация по README.
+        if f.selected_merge_state_exists and f.selected_merge_id:
+            return "S6_MERGED"
+        if f.selected_snapshot_approved and f.selected_run_core_exists and f.selected_run_anchors_exists and f.selected_stage_fingerprints_match:
+            return "S5_READY_TO_MERGE"
+        if f.selected_run_anchors_exists:
+            return "S4_EXECUTED_ANCHORS"
+        if f.selected_run_core_exists:
+            return "S3_EXECUTED_CORE"
+        if f.selected_snapshot_approved:
+            return "S2_APPROVED"
+        if f.selected_snapshot_ready:
+            return "S1_SNAPSHOT_READY"
+        return "S0_NO_SNAPSHOT"
+
+    def allowed_forbidden(state: str) -> tuple[list[str], list[str]]:
+        allowed: list[str] = []
+        forbidden: list[str] = []
+
+        # decide: разрешён из любого состояния (таблица FSM/переходов)
+        allowed.append("DECIDE: python -m scripts.orchestrator decide")
+
+        # approve: только S1
+        if state == "S1_SNAPSHOT_READY":
+            allowed.append("APPROVE: python -m scripts.orchestrator approve --snapshot <snapshot_id>")
+        else:
+            forbidden.append("APPROVE: forbidden (requires S1_SNAPSHOT_READY: snapshot.json + canonical.json + sha256 exist)")
+
+        # execute: только S2, и запрещён после MERGE (STOP-condition)
+        if state == "S2_APPROVED":
+            allowed.append("EXECUTE CORE: python -m scripts.orchestrator execute --stage core --snapshot .")
+            allowed.append("EXECUTE ANCHORS: python -m scripts.orchestrator execute --stage anchors --snapshot .")
+        elif state == "S6_MERGED":
+            forbidden.append("EXECUTE CORE/ANCHORS: forbidden (STOP-condition: execute after S6_MERGED)")
+        else:
+            forbidden.append("EXECUTE CORE/ANCHORS: forbidden (requires S2_APPROVED: approvals/<sha256>.approved exists)")
+
+        # merge: только S5
+        if state == "S5_READY_TO_MERGE":
+            allowed.append("MERGE: python -m scripts.merge_pass2 .")
+        else:
+            forbidden.append("MERGE: forbidden (requires S5_READY_TO_MERGE: CORE + ANCHORS present and immutable_fingerprint matches)")
+
+        # post-check: только S6 и только по merge_id
+        if state == "S6_MERGED":
+            allowed.append("POST-CHECK: python scripts/check_deliverables.py <merge_id>")
+        else:
+            forbidden.append("POST-CHECK: forbidden (requires S6_MERGED: merge-state exists; post-check only by merge_id)")
+
+        return allowed, forbidden
+
+    state = observed_fsm_state()
+    allowed, forbidden = allowed_forbidden(state)
+
     lines: list[str] = []
-    lines.append("READ-ONLY DASHBOARD (v2)")
+    lines.append("READ-ONLY DASHBOARD (v3)")
     lines.append("")
     lines.append(f"repo_root: {f.repo_root}")
+    lines.append("")
+
+    lines.append(f"OBSERVED_FSM_STATE: {state}")
+    lines.append("")
+
+    lines.append("ALLOWED ACTIONS (info only; NOT a permission)")
+    for a in allowed:
+        lines.append(f"- {a}")
+    lines.append("")
+
+    lines.append("FORBIDDEN ACTIONS (info only; reason = contract predicate)")
+    for x in forbidden:
+        lines.append(f"- {x}")
     lines.append("")
 
     lines.append(f"state/snapshots: {len(f.snapshots)} file(s)")
     lines.append(f"latest_snapshot_id: {f.latest_snapshot_id or '—'}")
     lines.append(f"selected_snapshot_id: {f.selected_snapshot_id or '—'}")
+    lines.append(f"selected_snapshot_ready (json+canonical+sha): {yn(f.selected_snapshot_ready)}")
     lines.append(f"selected_snapshot_sha256: {f.selected_snapshot_sha256 or '—'}")
     lines.append(f"selected_snapshot_approved: {yn(f.selected_snapshot_approved) if f.selected_snapshot_sha256 else '—'}")
     lines.append("")
@@ -197,23 +364,19 @@ def format_facts(f: RepoFacts) -> str:
     lines.append(f"outputs/pass_2 runs: {len(f.runs)} dir(s)")
     lines.append(f"latest_run_id: {f.latest_run_id or '—'}")
     lines.append(f"selected_run_id: {f.selected_run_id or '—'}")
+    lines.append(f"selected_run_core_exists: {yn(f.selected_run_core_exists)}")
+    lines.append(f"selected_run_anchors_exists: {yn(f.selected_run_anchors_exists)}")
+    lines.append(f"immutable_fingerprint (core): {f.selected_core_immutable_fingerprint or '—'}")
+    lines.append(f"immutable_fingerprint (anchors): {f.selected_anchors_immutable_fingerprint or '—'}")
+    lines.append(f"immutable_fingerprint match: {yn(f.selected_stage_fingerprints_match)}")
     lines.append("")
 
     lines.append(f"selected_merge_id (by_run pointer): {f.selected_merge_id or '—'}")
     lines.append(f"selected_merge_state_exists: {yn(f.selected_merge_state_exists) if f.selected_merge_id else '—'}")
     lines.append("")
 
-    # Pipeline status = только наблюдаемые факты (никаких выводов/рекомендаций).
-    lines.append("PIPELINE STATUS (facts only)")
-    lines.append(f"PASS_1 snapshot_present: {yn(f.selected_snapshot_exists)}")
-    lines.append(f"APPROVE marker_present: {yn(f.selected_snapshot_approved) if f.selected_snapshot_sha256 else '—'}")
-    lines.append(f"PASS_2 run_present: {yn(f.selected_run_exists)}")
-    lines.append(f"MERGE state_present: {yn(f.selected_merge_state_exists) if f.selected_merge_id else '—'}")
-    lines.append("")
-
     lines.append("Keys: [r] refresh  |  [q] quit")
     return "\n".join(lines)
-
 
 
 class ReadOnlyDashboard(App):
@@ -349,5 +512,17 @@ class ReadOnlyDashboard(App):
         self.query_one("#facts", Static).update(format_facts(facts))
 
 
-if __name__ == "__main__":
+def main() -> int:
+    # В non-TTY (smoke/CI) Textual может не успеть отрендерить UI.
+    # В этом режиме печатаем read-only проекцию контракта и выходим.
+    if not sys.stdout.isatty():
+        facts = collect_facts()
+        print(format_facts(facts))
+        return 0
+
     ReadOnlyDashboard().run()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
