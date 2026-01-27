@@ -30,10 +30,12 @@ class RepoFacts:
 
     # Выбор пользователя (UI state only) + факты по выбранному
     selected_snapshot_id: str | None
+    selected_snapshot_exists: bool
     selected_snapshot_sha256: str | None
     selected_snapshot_approved: bool
 
     selected_run_id: str | None
+    selected_run_exists: bool
     selected_merge_id: str | None
     selected_merge_state_exists: bool
 
@@ -136,18 +138,22 @@ def collect_facts(selected_snapshot_id: str | None = None, selected_run_id: str 
     eff_run_id = selected_run_id or latest_run_id
 
     # факты по выбранному snapshot
+    selected_snapshot_exists = False
     selected_snapshot_sha256 = None
     selected_snapshot_approved = False
     if eff_snapshot_id:
+        selected_snapshot_exists = (snapshots_dir / f"{eff_snapshot_id}.snapshot.json").exists()
         sha_val = _safe_read_text(snapshots_dir / f"{eff_snapshot_id}.sha256")
         if sha_val:
             selected_snapshot_sha256 = sha_val
             selected_snapshot_approved = (approvals_dir / f"{sha_val}.approved").exists()
 
     # факты по выбранному run
+    selected_run_exists = False
     selected_merge_id = None
     selected_merge_state_exists = False
     if eff_run_id:
+        selected_run_exists = (pass2_dir / eff_run_id).exists()
         merge_id_text = _safe_read_text(by_run_dir / f"{eff_run_id}.merge_id")
         if merge_id_text:
             selected_merge_id = merge_id_text
@@ -160,12 +166,15 @@ def collect_facts(selected_snapshot_id: str | None = None, selected_run_id: str 
         latest_snapshot_id=latest_snapshot_id,
         latest_run_id=latest_run_id,
         selected_snapshot_id=eff_snapshot_id,
+        selected_snapshot_exists=selected_snapshot_exists,
         selected_snapshot_sha256=selected_snapshot_sha256,
         selected_snapshot_approved=selected_snapshot_approved,
         selected_run_id=eff_run_id,
+        selected_run_exists=selected_run_exists,
         selected_merge_id=selected_merge_id,
         selected_merge_state_exists=selected_merge_state_exists,
     )
+
 
 
 def format_facts(f: RepoFacts) -> str:
@@ -182,7 +191,7 @@ def format_facts(f: RepoFacts) -> str:
     lines.append(f"latest_snapshot_id: {f.latest_snapshot_id or '—'}")
     lines.append(f"selected_snapshot_id: {f.selected_snapshot_id or '—'}")
     lines.append(f"selected_snapshot_sha256: {f.selected_snapshot_sha256 or '—'}")
-    lines.append(f"selected_snapshot_approved: {yn(f.selected_snapshot_approved) if f.selected_snapshot_id else '—'}")
+    lines.append(f"selected_snapshot_approved: {yn(f.selected_snapshot_approved) if f.selected_snapshot_sha256 else '—'}")
     lines.append("")
 
     lines.append(f"outputs/pass_2 runs: {len(f.runs)} dir(s)")
@@ -193,8 +202,18 @@ def format_facts(f: RepoFacts) -> str:
     lines.append(f"selected_merge_id (by_run pointer): {f.selected_merge_id or '—'}")
     lines.append(f"selected_merge_state_exists: {yn(f.selected_merge_state_exists) if f.selected_merge_id else '—'}")
     lines.append("")
+
+    # Pipeline status = только наблюдаемые факты (никаких выводов/рекомендаций).
+    lines.append("PIPELINE STATUS (facts only)")
+    lines.append(f"PASS_1 snapshot_present: {yn(f.selected_snapshot_exists)}")
+    lines.append(f"APPROVE marker_present: {yn(f.selected_snapshot_approved) if f.selected_snapshot_sha256 else '—'}")
+    lines.append(f"PASS_2 run_present: {yn(f.selected_run_exists)}")
+    lines.append(f"MERGE state_present: {yn(f.selected_merge_state_exists) if f.selected_merge_id else '—'}")
+    lines.append("")
+
     lines.append("Keys: [r] refresh  |  [q] quit")
     return "\n".join(lines)
+
 
 
 class ReadOnlyDashboard(App):

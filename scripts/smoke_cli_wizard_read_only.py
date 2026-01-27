@@ -38,7 +38,9 @@ def snapshot_tree(root: Path) -> Dict[str, FileStamp]:
 
 def run_cli_wizard_help() -> int:
     cmd = [sys.executable, "-m", "scripts.cli_wizard", "--help"]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    r = subprocess.run(cmd, capture_output=True, text=True, env=env)
     # Always print output to help debugging in CI/local runs.
     if r.stdout:
         print(r.stdout.rstrip())
