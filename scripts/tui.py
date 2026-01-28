@@ -278,48 +278,6 @@ def format_facts(f: RepoFacts) -> str:
     def yn(v: bool) -> str:
         return "yes" if v else "no"
 
-    def contract_actions_matrix() -> list[str]:
-        """
-        Контрактная проекция README.md (read-only):
-        - НЕ вычисляем FSM-state
-        - НЕ делаем выводов “сейчас можно/нельзя”
-        - Показываем только контрактные предикаты и сырые наблюдаемые доказательства
-        """
-        # сырые “доказательства” (факт на диске)
-        ev_snapshot_ready = f.selected_snapshot_ready
-        ev_approved = f.selected_snapshot_approved
-        ev_core = f.selected_run_core_exists
-        ev_anchors = f.selected_run_anchors_exists
-        ev_fp_match = f.selected_stage_fingerprints_match
-        ev_merge = (f.selected_merge_id is not None and f.selected_merge_state_exists)
-
-        out: list[str] = []
-
-        out.append("- DECIDE: python -m scripts.orchestrator decide")
-        out.append("  - requires: any state")
-        out.append("  - evidence: (not applicable)")
-
-        out.append("- APPROVE: python -m scripts.orchestrator approve --snapshot <snapshot_id>")
-        out.append("  - requires: snapshot.json + canonical.json + sha256 exist")
-        out.append(f"  - evidence: snapshot_ready(json+canonical+sha)={yn(ev_snapshot_ready)}")
-
-        out.append("- EXECUTE CORE: python -m scripts.orchestrator execute --stage core --snapshot state/snapshots/<snapshot_id>.snapshot.json")
-        out.append("  - requires: approvals/<sha256>.approved exists")
-        out.append(f"  - evidence: snapshot_approved={yn(ev_approved)}")
-
-        out.append("- EXECUTE ANCHORS: python -m scripts.orchestrator execute --stage anchors --snapshot state/snapshots/<snapshot_id>.snapshot.json")
-        out.append("  - requires: approvals/<sha256>.approved exists")
-        out.append(f"  - evidence: snapshot_approved={yn(ev_approved)}")
-
-        out.append("- MERGE: python -m scripts.merge_pass2 --core-snapshot-id <run_id> --anchors-snapshot-id <run_id>")
-        out.append("  - requires: CORE + ANCHORS present; immutable_fingerprint match (best-effort observation)")
-        out.append(f"  - evidence: core_exists={yn(ev_core)}, anchors_exists={yn(ev_anchors)}, immutable_fingerprint_match={yn(ev_fp_match)}")
-
-        out.append("- POST-CHECK: python scripts/check_deliverables.py <merge_id>")
-        out.append("  - requires: merge-state exists for merge_id (post-check only by merge_id)")
-        out.append(f"  - evidence: merge_id_present={yn(f.selected_merge_id is not None)}, merge_state_exists={yn(f.selected_merge_state_exists) if f.selected_merge_id else '—'}")
-
-        return out
 
     lines: list[str] = []
     lines.append("READ-ONLY DASHBOARD (v3)")
@@ -330,8 +288,63 @@ def format_facts(f: RepoFacts) -> str:
     lines.append("OBSERVED EVIDENCE (read-only facts; no FSM inference)")
     lines.append("")
 
-    lines.append("CONTRACT ACTIONS (info only; NOT permission; NOT advice; NOT execution)")
-    lines.extend(contract_actions_matrix())
+    # Контрактный маркер для smoke_tui_read_only:
+    # наблюдаемое состояние = классификация только по фактам на диске (без S0..S6).
+    def observed_fsm_state() -> str:
+        ev_snapshot_ready = f.selected_snapshot_ready
+        ev_approved = bool(f.selected_snapshot_sha256) and f.selected_snapshot_approved
+        ev_core = f.selected_run_core_exists
+        ev_anchors = f.selected_run_anchors_exists
+        ev_fp_match = f.selected_stage_fingerprints_match
+        ev_merge = (f.selected_merge_id is not None and f.selected_merge_state_exists)
+
+        if ev_merge:
+            return "MERGED"
+        if ev_core and ev_anchors and ev_fp_match:
+            return "EXECUTED_CORE_AND_ANCHORS"
+        if ev_approved:
+            return "APPROVED"
+        if ev_snapshot_ready:
+            return "SNAPSHOT_READY"
+        if f.snapshots:
+            return "HAS_SNAPSHOTS"
+        return "EMPTY"
+
+    lines.append(f"OBSERVED_FSM_STATE: {observed_fsm_state()}")
+    lines.append("")
+
+    # Allowed/Forbidden = read-only проекция контрактных предикатов (инфо, не “разрешение”).
+
+    ev_snapshot_ready = f.selected_snapshot_ready
+    ev_approved = bool(f.selected_snapshot_sha256) and f.selected_snapshot_approved
+    ev_core = f.selected_run_core_exists
+    ev_anchors = f.selected_run_anchors_exists
+    ev_fp_match = f.selected_stage_fingerprints_match
+    ev_merge_id_present = (f.selected_merge_id is not None)
+    ev_merge_state_exists = bool(f.selected_merge_id) and f.selected_merge_state_exists
+    ev_merge = ev_merge_id_present and ev_merge_state_exists
+
+    actions = [
+        ("DECIDE", "python -m scripts.orchestrator decide", True, "requires: any state"),
+        ("APPROVE", "python -m scripts.orchestrator approve --snapshot <snapshot_id>", ev_snapshot_ready, f"requires: snapshot_ready(json+canonical+sha)={yn(ev_snapshot_ready)}"),
+        ("EXECUTE CORE", "python -m scripts.orchestrator execute --stage core --snapshot state/snapshots/<snapshot_id>.snapshot.json", ev_approved, f"requires: snapshot_approved={yn(ev_approved)}"),
+        ("EXECUTE ANCHORS", "python -m scripts.orchestrator execute --stage anchors --snapshot state/snapshots/<snapshot_id>.snapshot.json", ev_approved, f"requires: snapshot_approved={yn(ev_approved)}"),
+        ("MERGE", "python -m scripts.merge_pass2 --core-snapshot-id <run_id> --anchors-snapshot-id <run_id>", (ev_core and ev_anchors and ev_fp_match), f"requires: core_exists={yn(ev_core)}, anchors_exists={yn(ev_anchors)}, immutable_fingerprint_match={yn(ev_fp_match)}"),
+        ("POST-CHECK", "python scripts/check_deliverables.py <merge_id>", ev_merge, f"requires: merge_id_present={yn(ev_merge_id_present)}, merge_state_exists={yn(ev_merge_state_exists)}"),
+    ]
+
+    lines.append("ALLOWED ACTIONS (info only; NOT permission; NOT advice; NOT execution)")
+    for name, cmd, ok, reason in actions:
+        if ok:
+            lines.append(f"- {name}: {cmd}")
+            lines.append(f"  - {reason}")
+    lines.append("")
+
+    lines.append("FORBIDDEN ACTIONS (info only; NOT permission; NOT advice; NOT execution)")
+    for name, cmd, ok, reason in actions:
+        if not ok:
+            lines.append(f"- {name}: {cmd}")
+            lines.append(f"  - {reason}")
     lines.append("")
 
     lines.append(f"state/snapshots: {len(f.snapshots)} file(s)")
