@@ -23,14 +23,23 @@ def snapshot_tree(root: Path) -> Dict[str, FileStamp]:
         if ".git" in dirnames:
             dirnames.remove(".git")
 
+        # Runtime мусор: не часть репозитория, не должен влиять на доказательство read-only.
+        if "__pycache__" in dirnames:
+            dirnames.remove("__pycache__")
+
         for name in filenames:
+            if name.endswith(".pyc"):
+                continue
+
             p = Path(dirpath) / name
+            rel = str(p.relative_to(root)).replace("\\", "/")
             try:
                 st = p.stat()
             except FileNotFoundError:
-                # If something races with us, treat as a change by omission.
+                # If something races with us, record a sentinel so before/after will differ.
+                out[rel] = (-1, -1)
                 continue
-            rel = str(p.relative_to(root)).replace("\\", "/")
+
             out[rel] = (st.st_size, st.st_mtime_ns)
 
     return out
@@ -50,7 +59,9 @@ def run_cli_wizard_help() -> int:
 
 
 def main() -> int:
-    root = Path.cwd()
+    # Deterministic repo root (do not depend on current working directory).
+    # This file lives in <repo>/scripts/, so repo root is its parent.
+    root = Path(__file__).resolve().parents[1]
 
     before = snapshot_tree(root)
     rc = run_cli_wizard_help()
