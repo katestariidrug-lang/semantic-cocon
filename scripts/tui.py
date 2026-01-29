@@ -7,11 +7,8 @@ ROLE: UI only. No lifecycle logic. No writes. No subprocess/CLI запусков
 Показывает факты по диску (state/ + outputs/), ничего не запускает.
 """
 from __future__ import annotations
-
 from dataclasses import dataclass
-import json
 from pathlib import Path
-from typing import Any
 import sys
 
 from textual.app import App, ComposeResult
@@ -49,11 +46,6 @@ class RepoFacts:
     # run доказательства для S3/S4
     selected_run_core_exists: bool
     selected_run_anchors_exists: bool
-
-    # immutable_fingerprint наблюдение (best-effort, read-only)
-    selected_core_immutable_fingerprint: str | None
-    selected_anchors_immutable_fingerprint: str | None
-    selected_stage_fingerprints_match: bool  # core == anchors and not None
 
     selected_merge_id: str | None
     selected_merge_state_exists: bool
@@ -113,33 +105,6 @@ def _safe_read_raw_preview(path: Path) -> str:
         return "(binary file; raw preview disabled)"
 
 
-def _safe_read_json(path: Path) -> Any | None:
-    """
-    Read-only: best-effort JSON reader.
-    Любая ошибка => None (UI не является гейтом).
-    """
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError):
-        return None
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return None
-
-
-def _extract_immutable_fingerprint(execution_result_path: Path) -> str | None:
-    """
-    Read-only: пытаемся вытащить immutable_fingerprint из execution_result.json.
-    Это НЕ enforcement и НЕ гарантия; только наблюдение.
-    """
-    obj = _safe_read_json(execution_result_path)
-    if not isinstance(obj, dict):
-        return None
-    val = obj.get("immutable_fingerprint")
-    return val if isinstance(val, str) and val.strip() else None
-
-
 def collect_facts(selected_snapshot_id: str | None = None, selected_run_id: str | None = None) -> RepoFacts:
     here = Path(__file__).resolve()
     repo_root = _find_repo_root(here.parent)
@@ -155,14 +120,8 @@ def collect_facts(selected_snapshot_id: str | None = None, selected_run_id: str 
     # инвентарь snapshot_id (факт на диске)
     snapshots = sorted([p.stem.replace(".snapshot", "") for p in snapshots_dir.glob("*.snapshot.json")])
 
-    # latest snapshot = по mtime файла *.snapshot.json (факт на диске)
+    # Minimal TUI v0: no "latest" heuristics
     latest_snapshot_id = None
-    latest_snapshot_path = None
-    for p in snapshots_dir.glob("*.snapshot.json"):
-        if latest_snapshot_path is None or p.stat().st_mtime > latest_snapshot_path.stat().st_mtime:
-            latest_snapshot_path = p
-    if latest_snapshot_path is not None:
-        latest_snapshot_id = latest_snapshot_path.name.removesuffix(".snapshot.json")
 
     # инвентарь run_id (факт на диске)
     runs: list[str] = []
@@ -170,18 +129,12 @@ def collect_facts(selected_snapshot_id: str | None = None, selected_run_id: str 
     if pass2_dir.exists():
         runs = sorted([p.name for p in pass2_dir.iterdir() if p.is_dir()])
 
-    # latest run = по mtime директории outputs/pass_2/<run_id> (факт на диске)
+    # Minimal TUI v0: no "latest" heuristics
     latest_run_id = None
-    latest_run_path = None
-    for p in (pass2_dir.iterdir() if pass2_dir.exists() else []):
-        if p.is_dir() and (latest_run_path is None or p.stat().st_mtime > latest_run_path.stat().st_mtime):
-            latest_run_path = p
-    if latest_run_path is not None:
-        latest_run_id = latest_run_path.name
 
-    # выбор пользователя: если не задан, показываем latest (UI state only)
-    eff_snapshot_id = selected_snapshot_id or latest_snapshot_id
-    eff_run_id = selected_run_id or latest_run_id
+    # Minimal TUI v0: user selection only (no defaults)
+    eff_snapshot_id = selected_snapshot_id
+    eff_run_id = selected_run_id
 
     # факты по выбранному snapshot (FSM S1/S2 доказательства)
     selected_snapshot_json_exists = False
@@ -216,10 +169,6 @@ def collect_facts(selected_snapshot_id: str | None = None, selected_run_id: str 
     selected_run_core_exists = False
     selected_run_anchors_exists = False
 
-    selected_core_immutable_fingerprint = None
-    selected_anchors_immutable_fingerprint = None
-    selected_stage_fingerprints_match = False
-
     selected_merge_id = None
     selected_merge_state_exists = False
 
@@ -232,17 +181,7 @@ def collect_facts(selected_snapshot_id: str | None = None, selected_run_id: str 
         selected_run_core_exists = core_dir.exists() and core_dir.is_dir()
         selected_run_anchors_exists = anchors_dir.exists() and anchors_dir.is_dir()
 
-        if selected_run_core_exists:
-            selected_core_immutable_fingerprint = _extract_immutable_fingerprint(core_dir / "execution_result.json")
-        if selected_run_anchors_exists:
-            selected_anchors_immutable_fingerprint = _extract_immutable_fingerprint(anchors_dir / "execution_result.json")
-
-        if (
-            selected_core_immutable_fingerprint
-            and selected_anchors_immutable_fingerprint
-            and selected_core_immutable_fingerprint == selected_anchors_immutable_fingerprint
-        ):
-            selected_stage_fingerprints_match = True
+        # immutable_fingerprint is an enforcement concern and is NOT inspected by TUI
 
         merge_id_text = _safe_read_text(by_run_dir / f"{eff_run_id}.merge_id")
         if merge_id_text:
@@ -266,9 +205,6 @@ def collect_facts(selected_snapshot_id: str | None = None, selected_run_id: str 
         selected_run_exists=selected_run_exists,
         selected_run_core_exists=selected_run_core_exists,
         selected_run_anchors_exists=selected_run_anchors_exists,
-        selected_core_immutable_fingerprint=selected_core_immutable_fingerprint,
-        selected_anchors_immutable_fingerprint=selected_anchors_immutable_fingerprint,
-        selected_stage_fingerprints_match=selected_stage_fingerprints_match,
         selected_merge_id=selected_merge_id,
         selected_merge_state_exists=selected_merge_state_exists,
     )
@@ -290,61 +226,24 @@ def format_facts(f: RepoFacts) -> str:
 
     # Контрактный маркер для smoke_tui_read_only:
     # наблюдаемое состояние = классификация только по фактам на диске (без S0..S6).
-    def observed_fsm_state() -> str:
-        ev_snapshot_ready = f.selected_snapshot_ready
-        ev_approved = bool(f.selected_snapshot_sha256) and f.selected_snapshot_approved
-        ev_core = f.selected_run_core_exists
-        ev_anchors = f.selected_run_anchors_exists
-        ev_fp_match = f.selected_stage_fingerprints_match
-        ev_merge = (f.selected_merge_id is not None and f.selected_merge_state_exists)
-
-        if ev_merge:
-            return "MERGED"
-        if ev_core and ev_anchors and ev_fp_match:
-            return "EXECUTED_CORE_AND_ANCHORS"
-        if ev_approved:
-            return "APPROVED"
-        if ev_snapshot_ready:
-            return "SNAPSHOT_READY"
-        if f.snapshots:
-            return "HAS_SNAPSHOTS"
-        return "EMPTY"
-
-    lines.append(f"OBSERVED_FSM_STATE: {observed_fsm_state()}")
+    lines.append("OBSERVED FACTS (no FSM inference; no lifecycle decisions)")
     lines.append("")
 
-    # Allowed/Forbidden = read-only проекция контрактных предикатов (инфо, не “разрешение”).
-
-    ev_snapshot_ready = f.selected_snapshot_ready
-    ev_approved = bool(f.selected_snapshot_sha256) and f.selected_snapshot_approved
-    ev_core = f.selected_run_core_exists
-    ev_anchors = f.selected_run_anchors_exists
-    ev_fp_match = f.selected_stage_fingerprints_match
-    ev_merge_id_present = (f.selected_merge_id is not None)
-    ev_merge_state_exists = bool(f.selected_merge_id) and f.selected_merge_state_exists
-    ev_merge = ev_merge_id_present and ev_merge_state_exists
+    # Allowed/Forbidden = read-only список контрактных предикатов (инфо, не “разрешение”).
 
     actions = [
-        ("DECIDE", "python -m scripts.orchestrator decide", True, "requires: any state"),
-        ("APPROVE", "python -m scripts.orchestrator approve --snapshot <snapshot_id>", ev_snapshot_ready, f"requires: snapshot_ready(json+canonical+sha)={yn(ev_snapshot_ready)}"),
-        ("EXECUTE CORE", "python -m scripts.orchestrator execute --stage core --snapshot state/snapshots/<snapshot_id>.snapshot.json", ev_approved, f"requires: snapshot_approved={yn(ev_approved)}"),
-        ("EXECUTE ANCHORS", "python -m scripts.orchestrator execute --stage anchors --snapshot state/snapshots/<snapshot_id>.snapshot.json", ev_approved, f"requires: snapshot_approved={yn(ev_approved)}"),
-        ("MERGE", "python -m scripts.merge_pass2 --core-snapshot-id <run_id> --anchors-snapshot-id <run_id>", (ev_core and ev_anchors and ev_fp_match), f"requires: core_exists={yn(ev_core)}, anchors_exists={yn(ev_anchors)}, immutable_fingerprint_match={yn(ev_fp_match)}"),
-        ("POST-CHECK", "python scripts/check_deliverables.py <merge_id>", ev_merge, f"requires: merge_id_present={yn(ev_merge_id_present)}, merge_state_exists={yn(ev_merge_state_exists)}"),
+        ("DECIDE", "python -m scripts.orchestrator decide", "requires: any state"),
+        ("APPROVE", "python -m scripts.orchestrator approve --snapshot <snapshot_id>", "requires: snapshot_ready (json + canonical + sha256)"),
+        ("EXECUTE CORE", "python -m scripts.orchestrator execute --stage core", "requires: snapshot approved"),
+        ("EXECUTE ANCHORS", "python -m scripts.orchestrator execute --stage anchors", "requires: snapshot approved"),
+        ("MERGE", "python -m scripts.merge_pass2", "requires: core + anchors outputs for same approved snapshot"),
+        ("POST-CHECK", "python scripts/check_deliverables.py <merge_id>", "requires: merge-state exists"),
     ]
 
-    lines.append("ALLOWED ACTIONS (info only; NOT permission; NOT advice; NOT execution)")
-    for name, cmd, ok, reason in actions:
-        if ok:
-            lines.append(f"- {name}: {cmd}")
-            lines.append(f"  - {reason}")
-    lines.append("")
-
-    lines.append("FORBIDDEN ACTIONS (info only; NOT permission; NOT advice; NOT execution)")
-    for name, cmd, ok, reason in actions:
-        if not ok:
-            lines.append(f"- {name}: {cmd}")
-            lines.append(f"  - {reason}")
+    lines.append("ALLOWED ACTIONS (contract predicates only; NOT evaluated)")
+    for name, cmd, reason in actions:
+        lines.append(f"- {name}: {cmd}")
+        lines.append(f"  - {reason}")
     lines.append("")
 
     lines.append(f"state/snapshots: {len(f.snapshots)} file(s)")
@@ -360,10 +259,6 @@ def format_facts(f: RepoFacts) -> str:
     lines.append(f"selected_run_id: {f.selected_run_id or '—'}")
     lines.append(f"selected_run_core_exists: {yn(f.selected_run_core_exists)}")
     lines.append(f"selected_run_anchors_exists: {yn(f.selected_run_anchors_exists)}")
-    lines.append(f"immutable_fingerprint (core): {f.selected_core_immutable_fingerprint or '—'}")
-    lines.append(f"immutable_fingerprint (anchors): {f.selected_anchors_immutable_fingerprint or '—'}")
-    lines.append(f"immutable_fingerprint match: {yn(f.selected_stage_fingerprints_match)}")
-    lines.append("")
 
     lines.append(f"selected_merge_id (by_run pointer): {f.selected_merge_id or '—'}")
     lines.append(f"selected_merge_state_exists: {yn(f.selected_merge_state_exists) if f.selected_merge_id else '—'}")
