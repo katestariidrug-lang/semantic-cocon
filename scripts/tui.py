@@ -226,7 +226,7 @@ def format_facts(f: RepoFacts) -> str:
 
     # Контрактный маркер для smoke_tui_read_only:
     # наблюдаемое состояние = классификация только по фактам на диске (без S0..S6).
-    lines.append("OBSERVED FACTS (no FSM inference; no lifecycle decisions)")
+    lines.append("OBSERVED_FSM_STATE: (observed only; no inference; no decisions)")
     lines.append("")
 
     # Allowed/Forbidden = read-only список контрактных предикатов (инфо, не “разрешение”).
@@ -244,6 +244,12 @@ def format_facts(f: RepoFacts) -> str:
     for name, cmd, reason in actions:
         lines.append(f"- {name}: {cmd}")
         lines.append(f"  - {reason}")
+    lines.append("")
+
+    # Контрактная секция для smoke_tui_read_only:
+    # Это informational список. Никаких вычислений forbidden/allowed.
+    lines.append("FORBIDDEN ACTIONS (contract predicates only; NOT evaluated)")
+    lines.append("- (informational) TUI does not evaluate forbidden predicates")
     lines.append("")
 
     lines.append(f"state/snapshots: {len(f.snapshots)} file(s)")
@@ -343,12 +349,12 @@ class ReadOnlyDashboard(App):
                 if facts.selected_snapshot_id and facts.selected_snapshot_id in facts.snapshots:
                     sel_snapshot.value = facts.selected_snapshot_id
                 else:
-                    sel_snapshot.value = None
+                    sel_snapshot.clear()
 
                 if facts.selected_run_id and facts.selected_run_id in facts.runs:
                     sel_run.value = facts.selected_run_id
                 else:
-                    sel_run.value = None
+                    sel_run.clear()
             finally:
                 self._reloading_options = False
 
